@@ -15,37 +15,27 @@ export function Future() {
           <Separator className="mb-8 bg-border" />
 
           <div className="border border-border p-8 mb-8">
-            <h3 className="font-bold text-lg mb-4">Anthropic AI Safety Fellows Program</h3>
+            <h3 className="font-bold text-lg mb-4">2026 Industry Internship</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Target: October 2025 Cohort (London/Remote UK/Ontario Canada)
+              Target: Foundation models team working on edge/cloud intelligence (e.g., Apple Zurich)
             </p>
 
-            <div className="space-y-4">
+            <div className="space-y-4 text-sm">
               <div>
-                <h4 className="font-bold text-sm mb-2">Fellowship Focus (8-24 weeks)</h4>
-                <ul className="space-y-2 text-sm">
-                  <li>• Develop evaluation framework for distributed AI deployment</li>
-                  <li>• Study knowledge transfer methods between model architectures</li>
-                  <li>• Create safety benchmarks for edge AI systems</li>
-                  <li>• Release reproducible evaluation tools with full documentation</li>
+                <h4 className="font-bold mb-2">Goals</h4>
+                <ul className="space-y-2">
+                  <li>• Ship a “cognitive core” prototype: small model, strong tool-use, minimal memorization</li>
+                  <li>• Validate collaborative GRPO-style RL with on-device rollouts + cloud updates</li>
+                  <li>• Deliver code + evals that teams can extend to production</li>
                 </ul>
               </div>
 
               <div>
-                <h4 className="font-bold text-sm mb-2">Research Questions</h4>
-                <ol className="space-y-2 text-sm list-decimal list-inside">
-                  <li>How can we efficiently deploy AI models on edge devices?</li>
-                  <li>What are the safety implications of distributed AI systems?</li>
-                  <li>How do we ensure knowledge transfer preserves safety properties?</li>
-                </ol>
-              </div>
-
-              <div>
-                <h4 className="font-bold text-sm mb-2">Proposed Mentorship Areas</h4>
-                <ul className="space-y-1 text-sm">
-                  <li>• Distributed systems and edge AI</li>
-                  <li>• Model compression and optimization</li>
-                  <li>• Safety evaluation methodologies</li>
+                <h4 className="font-bold mb-2">Timeline</h4>
+                <ul className="space-y-2">
+                  <li>• Dec 2025: ICDCS submission for collaborative fine-tuning (edge adapters + cloud backbones)</li>
+                  <li>• Early 2026: GRPO-style RL manuscript; internship start</li>
+                  <li>• Early 2027: PhD defense</li>
                 </ul>
               </div>
             </div>
@@ -55,10 +45,9 @@ export function Future() {
             <h3 className="text-sm font-bold uppercase tracking-wider mb-4">Long-term Vision</h3>
             <Separator className="mb-4 bg-border" />
             <p className="text-sm leading-relaxed">
-              Build empirical foundations for safe model compression and deployment. Create
-              reproducible evaluation frameworks that bridge the gap between research and
-              production. Contribute to making AI systems reliably safe across all deployment
-              contexts and languages.
+              Build a deployable “cognitive core” that uses tools and retrieval to stay small, private,
+              and responsive on billions of devices. Publish the empirical recipes—benchmarks, rollout
+              tooling, and edge/cloud split patterns—that make that possible.
             </p>
           </div>
         </motion.div>

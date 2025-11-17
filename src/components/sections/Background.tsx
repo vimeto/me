@@ -7,21 +7,21 @@ const education = [
     institution: 'University of Helsinki',
     degree: 'Doctoral Researcher',
     department: 'Department of Computer Science',
-    focus: 'Distributed AI, Knowledge Transfer, AI Safety',
+    focus: 'Distributed LLM inference, cognitive core, edge/cloud RL',
   },
   {
-    period: '2021-2024',
+    period: '2023-2024',
     institution: 'Aalto University',
-    degree: 'B.Sc. & M.Sc. Track',
-    department: 'Computer Science',
-    focus: 'Machine Learning, Systems',
+    degree: 'M.Sc. Computer Science',
+    department: 'Machine Learning, Data Science and Artificial Intelligence',
+    focus: 'LLMs, systems, applied ML',
   },
   {
-    period: '2017-2020',
-    institution: 'Tampereen Lyseon Lukio',
-    degree: 'International Baccalaureate Diploma',
+    period: '2021-2023',
+    institution: 'Aalto University',
+    degree: 'B.Sc. Mathematics and Operations Research',
     department: '',
-    focus: 'Mathematics, Physics, Computer Science',
+    focus: 'Mathematics, statistical learning, optimization',
   },
 ]
 
@@ -77,6 +77,24 @@ export function Background() {
                   </div>
                 </motion.div>
               ))}
+            </div>
+            <p className="mt-4 text-sm text-muted-foreground">
+              Completed both B.Sc. and M.Sc. in roughly three years while working in industry roles.
+            </p>
+          </div>
+
+          <div className="mb-12">
+            <h3 className="text-sm font-bold uppercase tracking-wider mb-6">Applied / Embodied Work</h3>
+            <Separator className="mb-6 bg-border" />
+            <div className="space-y-4 text-sm">
+              <p className="border border-border p-4">
+                Built a go-kart from scratch (moped engine) — practical systems intuition for how parts
+                interact under real constraints.
+              </p>
+              <p className="border border-border p-4">
+                Ran a small construction company for three summers with one employee — renovations,
+                painting, and small builds; learned end-to-end delivery and hands-on project management.
+              </p>
             </div>
           </div>
 

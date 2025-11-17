@@ -12,6 +12,13 @@ const posts = [
     description: 'Empirical analysis of safety transfer in model compression',
   },
   {
+    title: 'MCPs + ChakIt: building tool-using agents without losing control',
+    category: 'Lab Notes',
+    date: 'Coming Soon',
+    description:
+      'Practical notes on Multi-Context Protocol agents with OpenAI’s new ChakIt toolkit: routing, guardrails, and latency on edge devices.',
+  },
+  {
     title: "Multilingual alignment: failures I've measured in the wild",
     category: 'Safety Deep Dives',
     date: 'Coming Soon',

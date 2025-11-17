@@ -13,45 +13,53 @@ interface Project {
 const projects: Project[] = [
   {
     year: '2025',
-    title: 'Vibemetrics → Innolink acquisition',
-    role: 'Senior Developer (post-acquisition)',
+    title: 'Vibemetrics → Bondata acquisition',
+    role: 'CTO → Head of AI',
     description:
-      'Worked on social analytics platform through its acquisition by Innolink. Continued as Senior Developer at Innolink, leading technical integration and platform scaling.',
-    impact: 'Successful acquisition in May 2025',
-    link: 'https://www.innolink.fi/innolink-vahvistaa-markkina-asemaansa-ostamalla-suomalaisen-tutkimusalusta-vibemetricsin',
+      'Led the platform through acquisition (May 2025). Transitioned from CTO to Head of AI in July, shipping RAG-based survey agents and recommendations to production.',
+    impact: 'Acquisition closed; AI roadmap and production systems delivered',
+    link: 'https://www.bondata.fi',
   },
   {
     year: '2025',
     title: 'Padlo',
     role: 'Founder',
     description:
-      'Founded and launched mobile application startup. Architected full-stack infrastructure and led product development from concept to market.',
-    impact: 'Successfully launched to production',
-    link: 'https://padlo.fi',
+      'Founded padlo.co, a padel live scoreboard + coaching app. Sole coder across mobile, backend, and analytics for player/coach insights.',
+    impact: 'Launched March 2025 to live tournaments',
+    link: 'https://padlo.co',
   },
   {
-    year: '2024',
-    title: 'GRPO Implementation',
-    role: 'Primary Developer',
-    description:
-      'Implemented custom training pipeline for group relative policy optimization. Conducted 12 documented ablation studies to identify optimal hyperparameters.',
-    impact: 'Open-sourced implementation with reproducible benchmarks',
-  },
-  {
-    year: '2024',
-    title: 'Small-Model Measurement Study',
+    year: '2025',
+    title: 'Collaborative Edge/Cloud Fine-Tuning',
     role: 'Lead Researcher',
     description:
-      'Systematic evaluation of sub-7B parameter models on consumer hardware. Established baseline metrics and identified key failure modes for distillation targets.',
-    impact: 'Published dataset of performance characteristics',
+      'Adapters that can skip transformer layers stay on-device while frozen LLM backbones run in the cloud. Privacy-preserving adaptation with latency/quality tradeoffs.',
+    impact: 'ICDCS 2025 submission with reference pipeline',
   },
   {
-    year: '2023',
-    title: 'Lossless Compression of DNNs',
-    role: 'Presenter',
+    year: '2025',
+    title: 'Measuring On-Device Agents',
+    role: 'Lead Researcher',
     description:
-      'Aalto University topic presentation on neural network compression techniques. Analyzed theoretical limits and practical approaches to model size reduction.',
-    impact: 'Academic presentation with published slides',
+      'Systematic evaluation of LLM agents on consumer hardware (iPhone, MacBook, edge servers) across 300 tasks and multiple models.',
+    impact: 'PerCom 2026 submission with public measurements',
+  },
+  {
+    year: '2025',
+    title: 'Stanford CS336 Pretraining Competition',
+    role: '1st Place',
+    description:
+      'Designed and trained a language model achieving the lowest perplexity on the OpenWebText dataset for the CS336 pretraining leaderboard.',
+    impact: '1st place finish',
+  },
+  {
+    year: '2019',
+    title: 'Teknet',
+    role: 'Founder',
+    description:
+      'Founded a metal manufacturing company. Led project delivery and operations while studying, building hands-on discipline for applied problem solving.',
+    impact: 'Profitable services business',
   },
 ]
 

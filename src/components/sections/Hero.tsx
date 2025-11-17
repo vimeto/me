@@ -14,13 +14,15 @@ export function Hero() {
           <Separator className="my-8 bg-border" />
 
           <p className="text-xl mb-4">
-            Distributed AI — edge deployment, knowledge transfer, and safety.
+            Distributed LLMs — cognitive core, edge deployment, and tool-using agents.
           </p>
 
           <p className="text-lg mb-8 text-muted-foreground">
-            Doctoral Researcher, University of Helsinki
+            Doctoral Researcher (distributed LLM inference), University of Helsinki
             <br />
-            Senior Developer at Innolink, Former Founder
+            Head of AI, Bondata (transitioning end of 2025 to focus on research)
+            <br />
+            Founder, Teknet (2019) • Co-founder, Padlo.co (2025)
           </p>
 
           <div className="space-y-4">
@@ -29,9 +31,9 @@ export function Hero() {
             </h2>
             <Separator className="bg-border" />
             <ul className="space-y-2 text-lg">
-              <li>• Distributed AI: efficient deployment on edge devices</li>
-              <li>• LLM Knowledge Transfer: methods for model-to-model learning</li>
-              <li>• AI Safety: evaluation frameworks for production systems</li>
+              <li>• Cognitive core: small, tool-using models with strong reasoning</li>
+              <li>• Distributed inference: edge/cloud collaboration for LLMs</li>
+              <li>• RL for agents: GRPO-style training with on-device rollouts</li>
             </ul>
           </div>
 

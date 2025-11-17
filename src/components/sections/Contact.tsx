@@ -83,7 +83,7 @@ export function Contact() {
 
           <div className="mt-16 pt-8 border-t border-border">
             <p className="text-sm text-muted-foreground text-center">
-              © {new Date().getFullYear()} Vilhelm Toivonen. Built with React & Tailwind.
+              © {new Date().getFullYear()} Vilhelm Toivonen.
             </p>
           </div>
         </motion.div>

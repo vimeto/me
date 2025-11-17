@@ -4,6 +4,7 @@ import { Research } from '@/components/sections/Research'
 import { Projects } from '@/components/sections/Projects'
 import { Background } from '@/components/sections/Background'
 import { Future } from '@/components/sections/Future'
+import { Writing } from '@/components/sections/Writing'
 import { Contact } from '@/components/sections/Contact'
 
 function App() {
@@ -16,6 +17,7 @@ function App() {
         <Projects />
         <Background />
         <Future />
+        <Writing />
         <Contact />
       </main>
     </>
