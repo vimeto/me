@@ -15,6 +15,10 @@ dist-ssr
 build
 *.local
 
+# Cloudflare Worker dev artifacts and local secrets.
+worker/.dev.vars
+.wrangler/
+
 # Playwright
 /test-results/
 /playwright-report/

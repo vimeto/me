@@ -1,0 +1,14 @@
+# Copy to `worker/.dev.vars` (gitignored) for `pnpm worker:dev`.
+#
+# Populate real values from the Cloudflare dashboard or from
+# `wrangler secret put <NAME> --config worker/wrangler.toml` for deploys.
+
+# Anthropic API key used by the comment moderation pipeline (Phase 6).
+HAIKU_API_KEY=
+
+# Cloudflare Turnstile secret (Phase 6).
+TURNSTILE_SECRET=
+
+# Optional salt for IP hashing. If unset the worker falls back to a
+# deployment-scoped default; set an explicit value here for test reproducibility.
+IP_HASH_SALT=

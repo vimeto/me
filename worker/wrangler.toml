@@ -1,0 +1,32 @@
+name = "personal-page-worker"
+main = "src/index.ts"
+compatibility_date = "2026-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Binding to the D1 instance. The `database_id` is populated once the
+# database is provisioned with `wrangler d1 create personal-page`.
+[[d1_databases]]
+binding = "DB"
+database_name = "personal-page"
+database_id = "PLACEHOLDER__RUN__wrangler_d1_create"
+migrations_dir = "migrations"
+
+[vars]
+# Non-secret config. Secrets (HAIKU_API_KEY, TURNSTILE_SECRET, etc.) go into
+# the dashboard / `wrangler secret put` and are read off `env` at runtime.
+SITE_ORIGIN = "https://vilhelmtoivonen.com"
+ADMIN_ORIGIN = "https://vilhelmtoivonen.com"
+
+# Environment-specific overrides.
+[env.preview]
+name = "personal-page-worker-preview"
+
+[env.preview.vars]
+SITE_ORIGIN = "https://preview.vilhelmtoivonen.com"
+ADMIN_ORIGIN = "https://preview.vilhelmtoivonen.com"
+
+[[env.preview.d1_databases]]
+binding = "DB"
+database_name = "personal-page-preview"
+database_id = "PLACEHOLDER__RUN__wrangler_d1_create_preview"
+migrations_dir = "migrations"

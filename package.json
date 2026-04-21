@@ -18,6 +18,9 @@
     "ladle:build": "ladle build",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots",
+    "worker:dev": "wrangler dev --config worker/wrangler.toml",
+    "worker:test": "tsx worker/tests/worker.test.ts",
+    "worker:deploy": "wrangler deploy --config worker/wrangler.toml",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -42,6 +45,7 @@
     "clsx": "^2.1.1",
     "d3-array": "^3.2.4",
     "framer-motion": "^12.23.12",
+    "hono": "^4.12.14",
     "katex": "^0.16.45",
     "lucide-react": "^0.539.0",
     "react": "^19.1.1",
@@ -55,6 +59,7 @@
     "zod": "^4.3.6"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260421.1",
     "@eslint/js": "^9.33.0",
     "@ladle/react": "^5.1.1",
     "@mdx-js/mdx": "^3.1.1",
@@ -88,6 +93,7 @@
     "typescript-eslint": "^8.39.1",
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",
-    "vite": "^7.1.2"
+    "vite": "^7.1.2",
+    "wrangler": "^4.84.1"
   }
 }
