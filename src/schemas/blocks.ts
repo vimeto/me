@@ -67,12 +67,45 @@ export const ParamPlotProps = z
   .strict()
 export type ParamPlotProps = z.infer<typeof ParamPlotProps>
 
+// Quiz — self-contained multiple-choice question. Supports single-select
+// (exactly one correct choice) or multi-select (one or more correct).
+// Schema enforces that at least one choice is marked correct; single-select
+// requires exactly one.
+export const QuizProps = z
+  .object({
+    question: z.string().min(1),
+    choices: z
+      .array(
+        z
+          .object({
+            text: z.string().min(1),
+            correct: z.boolean().default(false),
+          })
+          .strict()
+      )
+      .min(2)
+      .max(8),
+    explanation: z.string().optional(),
+    multiSelect: z.boolean().default(false),
+  })
+  .strict()
+  .refine((q) => q.choices.some((c) => c.correct), {
+    message: 'at least one choice must be marked correct',
+    path: ['choices'],
+  })
+  .refine((q) => q.multiSelect || q.choices.filter((c) => c.correct).length === 1, {
+    message: 'single-select quiz must have exactly one correct choice',
+    path: ['choices'],
+  })
+export type QuizProps = z.infer<typeof QuizProps>
+
 // Validator-side name → schema map. Kept free of React imports so the
 // validator script can load it in Node without pulling the component tree.
 export const blockSchemas = {
   Figure: FigureProps,
   Callout: CalloutProps,
   ParamPlot: ParamPlotProps,
+  Quiz: QuizProps,
 } as const
 
 export type BlockName = keyof typeof blockSchemas

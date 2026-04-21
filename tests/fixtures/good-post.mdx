@@ -28,3 +28,22 @@ A paragraph with some text and $\alpha$ inline math.
     { kind: "slider", param: "bits", label: "Bits", min: 2, max: 8, step: 1, format: "int" }
   ]}
 />
+
+<Quiz
+  question="Pick the correct one."
+  choices={[
+    { text: "Right", correct: true },
+    { text: "Wrong" }
+  ]}
+  explanation="Because it is."
+/>
+
+<Quiz
+  multiSelect={true}
+  question="Pick two."
+  choices={[
+    { text: "A", correct: true },
+    { text: "B", correct: true },
+    { text: "C" }
+  ]}
+/>

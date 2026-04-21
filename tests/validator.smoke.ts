@@ -62,6 +62,18 @@ const cases: Case[] = [
     file: 'tests/fixtures/call-expression-prop.mdx',
     expect: { ok: false, codes: ['literal-props'] },
   },
+  {
+    file: 'tests/fixtures/quiz-no-correct.mdx',
+    expect: { ok: false, codes: ['schema'] },
+  },
+  {
+    file: 'tests/fixtures/quiz-single-two-correct.mdx',
+    expect: { ok: false, codes: ['schema'] },
+  },
+  {
+    file: 'tests/fixtures/quiz-too-few-choices.mdx',
+    expect: { ok: false, codes: ['schema'] },
+  },
 ]
 
 function fmt(issue: Issue): string {

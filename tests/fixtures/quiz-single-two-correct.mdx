@@ -1,0 +1,19 @@
+---
+title: Quiz single-select with two correct
+slug: quiz-single-two-correct
+publishedAt: 2026-04-21
+summary: multiSelect defaults to false so two correct answers is invalid.
+tags: [test]
+category: Lab Notes
+status: published
+estimatedReadMin: 1
+---
+
+<Quiz
+  question="Pick one."
+  choices={[
+    { text: "A", correct: true },
+    { text: "B", correct: true },
+    { text: "C" }
+  ]}
+/>

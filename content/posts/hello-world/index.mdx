@@ -70,3 +70,15 @@ export const computeRegistry: Record<string, ComputeFn> = {
   statically validatable. The same `ParamPlot` block powers every future
   post — only the `compute` key and `params` change.
 </Callout>
+
+## Check yourself
+
+<Quiz
+  question="What happens if you bump the noise σ past the half-integer distance?"
+  choices={[
+    { text: "Flip probability collapses to zero.", correct: false },
+    { text: "Flip probability approaches 1 because the Gaussian mass past the boundary becomes a full half.", correct: true },
+    { text: "The integer grid stops mattering and every weight flips to zero.", correct: false }
+  ]}
+  explanation="Once σ is large compared to d(w), both tails of the Gaussian flow past the nearest boundary and p_flip → 1."
+/>
