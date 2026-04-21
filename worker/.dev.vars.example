@@ -12,3 +12,15 @@ TURNSTILE_SECRET=
 # Optional salt for IP hashing. If unset the worker falls back to a
 # deployment-scoped default; set an explicit value here for test reproducibility.
 IP_HASH_SALT=
+
+# Cloudflare Access JWT verification (Phase 5b).
+# TEAM_DOMAIN is the slug before `.cloudflareaccess.com` — the worker fetches
+# its JWKS from `https://<TEAM_DOMAIN>.cloudflareaccess.com/cdn-cgi/access/certs`.
+ACCESS_TEAM_DOMAIN=
+# AUD tag for the Access application protecting /api/admin/*. Copy from the
+# Access dashboard: Access → Applications → <app> → Overview → Application Audience (AUD) Tag.
+ACCESS_AUD=
+# Local-dev escape hatch. Set to `1` in `worker/.dev.vars` to skip JWT
+# verification and trust the `cf-access-authenticated-user-email` header
+# emitted by `wrangler dev`. Never set in production.
+ACCESS_DEV_BYPASS=

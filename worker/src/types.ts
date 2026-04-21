@@ -5,6 +5,17 @@ export type Env = {
   // Set by wrangler.toml / dashboard. See `.dev.vars.example`.
   ADMIN_ORIGIN?: string
   SITE_ORIGIN?: string
+  // Cloudflare Access config used by the admin JWT middleware.
+  ACCESS_TEAM_DOMAIN?: string
+  ACCESS_AUD?: string
+  // Set to "1" in local dev only: bypasses JWT verification and trusts the
+  // `cf-access-authenticated-user-email` header set by `wrangler dev`.
+  ACCESS_DEV_BYPASS?: string
+}
+
+export type AccessUser = {
+  email: string
+  sub?: string
 }
 
 export type CommentRow = {
