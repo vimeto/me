@@ -11,6 +11,10 @@ export type Env = {
   // Set to "1" in local dev only: bypasses JWT verification and trusts the
   // `cf-access-authenticated-user-email` header set by `wrangler dev`.
   ACCESS_DEV_BYPASS?: string
+  // Comment submission pipeline (Phase 6).
+  TURNSTILE_SECRET?: string
+  HAIKU_API_KEY?: string
+  IP_HASH_SALT?: string
 }
 
 export type AccessUser = {
@@ -36,4 +40,21 @@ export type PublicComment = {
   author: string
   bodyHtml: string
   createdAt: string
+}
+
+export type SubmissionLogRow = {
+  client_ip_hash: string
+  submitted_at: string
+}
+
+// Shape of per-request dependencies set by the root middleware. Routes read
+// these via `c.var.deps`. Kept here so every route file can import without
+// creating an `app.ts` <-> `routes/*.ts` import cycle.
+import type { ModerationClient } from './lib/moderation'
+import type { TurnstileClient } from './lib/turnstile'
+
+export type RequestDeps = {
+  moderation: ModerationClient | null
+  turnstile: TurnstileClient | null
+  now: () => string
 }

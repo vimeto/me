@@ -5,8 +5,11 @@
 // boundary, exactly as a client would.
 
 import app from '../src/index'
+import { createApp } from '../src/app'
 import { createStubD1, mkComment } from './stub-d1'
 import type { Env } from '../src/types'
+import type { ModerationClient, ModerationVerdict } from '../src/lib/moderation'
+import type { TurnstileClient } from '../src/lib/turnstile'
 
 type Case = { name: string; run: () => Promise<void> }
 
@@ -322,6 +325,228 @@ test('admin rejects malformed id and status parameters', async () => {
 
   const badStatus = await app.fetch(adminReq('/api/admin/comments?status=banana'), mkAdminEnv(db))
   assertEq(badStatus.status, 400, 'bad status → 400')
+})
+
+// ---------------------------------------------------------------------------
+// Public POST /api/comments — the submission pipeline.
+// ---------------------------------------------------------------------------
+
+function stubModeration(verdict: ModerationVerdict, reason = 'stub'): ModerationClient {
+  return { check: async () => ({ verdict, reason }) }
+}
+
+function stubTurnstile(ok: boolean): TurnstileClient {
+  return { verify: async () => ok }
+}
+
+function postComment(body: unknown, headers: Record<string, string> = {}) {
+  return new Request('http://worker.test/api/comments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify(body),
+  })
+}
+
+const FIXED_NOW = '2026-04-21T09:00:00.000Z'
+
+test('POST /api/comments approves clean submission when moderator says approve', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: stubModeration('approve', 'benign'),
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const res = await testApp.fetch(
+    postComment({
+      slug: 'two-tails',
+      author: 'Ada',
+      body: 'Nice post!\n\nThanks.',
+      turnstileToken: 'x',
+    }),
+    mkEnv(db)
+  )
+  assertEq(res.status, 200, 'approved submission status')
+  const body = (await res.json()) as { status: string; id: number }
+  assertEq(body.status, 'approved', 'public status')
+  const row = db._all()[0]
+  assertEq(row.status, 'approved', 'db status')
+  assertEq(row.post_slug, 'two-tails', 'db slug')
+  assertEq(row.author_name, 'Ada', 'db author')
+  assertEq(row.body_html, '<p>Nice post!</p>\n<p>Thanks.</p>', 'sanitised html')
+  assertEq(db._submissions().length, 1, 'rate-limit log written')
+})
+
+test('POST rejects spam silently — public status is "pending"', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: stubModeration('reject', 'obvious spam'),
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const res = await testApp.fetch(
+    postComment({ slug: 'two-tails', author: 'Spam', body: 'Buy crypto!' }),
+    mkEnv(db)
+  )
+  assertEq(res.status, 200, 'silent-reject status')
+  const body = (await res.json()) as { status: string }
+  // Public status must not reveal the rejection — prevents oracle attacks.
+  assertEq(body.status, 'pending', 'public status for rejected is pending')
+  const row = db._all()[0]
+  assertEq(row.status, 'rejected', 'db row marked rejected')
+  if (!row.moderation_reason?.startsWith('auto-rejected:')) {
+    throw new Error(`expected auto-rejected reason, got: ${row.moderation_reason}`)
+  }
+})
+
+test('POST defaults to pending when no moderator is configured', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: null,
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const res = await testApp.fetch(
+    postComment({ slug: 'two-tails', author: 'Ada', body: 'hi' }),
+    mkEnv(db)
+  )
+  assertEq(res.status, 200, 'no-moderator status')
+  const body = (await res.json()) as { status: string }
+  assertEq(body.status, 'pending', 'no-moderator is pending')
+  assertEq(db._all()[0].status, 'pending', 'db pending')
+})
+
+test('POST honeypot silently drops and never writes to DB', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: stubModeration('approve'),
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const res = await testApp.fetch(
+    postComment({
+      slug: 'two-tails',
+      author: 'Bot',
+      body: 'hi',
+      honeypot: 'http://spam.example',
+    }),
+    mkEnv(db)
+  )
+  assertEq(res.status, 200, 'honeypot appears to succeed')
+  const body = (await res.json()) as { status: string }
+  assertEq(body.status, 'pending', 'honeypot looks pending')
+  assertEq(db._all().length, 0, 'no row written')
+  assertEq(db._submissions().length, 0, 'no submission log')
+})
+
+test('POST returns 403 when Turnstile rejects the token', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: stubModeration('approve'),
+    turnstile: stubTurnstile(false),
+    now: () => FIXED_NOW,
+  })
+  const res = await testApp.fetch(
+    postComment({ slug: 'two-tails', author: 'Ada', body: 'hi', turnstileToken: 'bad' }),
+    mkEnv(db)
+  )
+  assertEq(res.status, 403, 'turnstile reject')
+  assertEq(db._all().length, 0, 'no row written on turnstile fail')
+})
+
+test('POST 429s once rate limit threshold is reached', async () => {
+  const db = createStubD1()
+  // Seed 5 recent submissions for a known IP hash so we hit the limit
+  // without having to POST five times — keeps the test focused on the
+  // rate-limit branch. IP hash must match what the worker computes for
+  // `CF-Connecting-IP: 10.0.0.1` with salt `test-salt`.
+  const { createHash } = await import('node:crypto')
+  const ipHash = createHash('sha256').update('test-salt:10.0.0.1').digest('hex')
+  const now = Date.now()
+  db._seedSubmissions(
+    Array.from({ length: 5 }, (_, i) => ({
+      client_ip_hash: ipHash,
+      submitted_at: new Date(now - i * 1000).toISOString(),
+    }))
+  )
+  const testApp = createApp({
+    moderation: stubModeration('approve'),
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const env: Env = { ...mkEnv(db), IP_HASH_SALT: 'test-salt' }
+  const res = await testApp.fetch(
+    postComment(
+      { slug: 'two-tails', author: 'Ada', body: 'hi' },
+      { 'CF-Connecting-IP': '10.0.0.1' }
+    ),
+    env
+  )
+  assertEq(res.status, 429, 'rate limited')
+})
+
+test('POST validates input — missing body and oversize body both 400', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: null,
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const missing = await testApp.fetch(postComment({ slug: 'two-tails', author: 'Ada' }), mkEnv(db))
+  assertEq(missing.status, 400, 'missing body → 400')
+
+  const oversize = await testApp.fetch(
+    postComment({
+      slug: 'two-tails',
+      author: 'Ada',
+      body: 'x'.repeat(5000),
+    }),
+    mkEnv(db)
+  )
+  assertEq(oversize.status, 400, 'oversize body → 400')
+
+  const badSlug = await testApp.fetch(
+    postComment({ slug: 'BAD SLUG', author: 'Ada', body: 'hi' }),
+    mkEnv(db)
+  )
+  assertEq(badSlug.status, 400, 'bad slug → 400')
+})
+
+test('POST rejects malformed JSON', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: null,
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  const res = await testApp.fetch(
+    new Request('http://worker.test/api/comments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{not json',
+    }),
+    mkEnv(db)
+  )
+  assertEq(res.status, 400, 'bad json → 400')
+})
+
+test('POST then GET returns the approved comment', async () => {
+  const db = createStubD1()
+  const testApp = createApp({
+    moderation: stubModeration('approve'),
+    turnstile: null,
+    now: () => FIXED_NOW,
+  })
+  await testApp.fetch(
+    postComment({ slug: 'two-tails', author: 'Ada', body: 'round-trip test' }),
+    mkEnv(db)
+  )
+  const getRes = await testApp.fetch(
+    new Request('http://worker.test/api/comments?post=two-tails'),
+    mkEnv(db)
+  )
+  const body = (await getRes.json()) as { count: number; comments: { bodyHtml: string }[] }
+  assertEq(body.count, 1, 'round-trip count')
+  assertEq(body.comments[0].bodyHtml, '<p>round-trip test</p>', 'round-trip html')
 })
 
 async function main() {
