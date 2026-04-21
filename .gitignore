@@ -11,6 +11,7 @@ node_modules
 .pnpm-store
 dist
 dist-ssr
+.vite-ssr-cache
 build
 *.local
 
@@ -18,6 +19,11 @@ build
 /test-results/
 /playwright-report/
 /playwright/.cache/
+# Only the Linux baselines (generated in Docker / CI) are the source of truth.
+# Local macOS/Windows runs generate extra snapshots for first comparison — do
+# not let them sneak into the repo.
+tests/visual/**/*-darwin.png
+tests/visual/**/*-win32.png
 
 # Blog content
 content/drafts/

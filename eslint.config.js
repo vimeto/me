@@ -30,4 +30,12 @@ export default tseslint.config(
       ...prettierConfig.rules,
     },
   },
+  {
+    // Server-only / SSR helpers legitimately re-export non-components. The
+    // react-refresh lint rule is irrelevant there and just creates noise.
+    files: ['src/entry-server.tsx', 'src/lib/ssr-routes.tsx'],
+    rules: {
+      'react-refresh/only-export-components': 'off',
+    },
+  },
 )

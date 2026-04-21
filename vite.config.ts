@@ -37,4 +37,9 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  ssr: {
+    // visx + d3-array ship as ESM; mark them external-free so they get bundled
+    // into the SSR bundle and resolve through our alias + MDX plugin.
+    noExternal: ['@visx/*', 'd3-array'],
+  },
 })

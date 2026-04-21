@@ -1,0 +1,164 @@
+import { getPost, listPosts } from '@/lib/content/posts'
+import type { Post } from '@/schemas/post'
+
+export const SITE = {
+  url: 'https://vilhelmtoivonen.com',
+  name: 'Vilhelm Toivonen',
+  title: 'Vilhelm Toivonen — AI Researcher',
+  description:
+    'Doctoral Researcher at University of Helsinki. Distributed AI, edge deployment, knowledge transfer, and AI safety.',
+  author: 'Vilhelm Toivonen',
+  twitter: '@ToivonenVilhelm',
+  locale: 'en_US',
+  ogImage: '/og-image.svg',
+} as const
+
+export type PageMeta = {
+  title: string
+  description: string
+  canonical: string
+  ogType: 'website' | 'article'
+  ogImage: string
+  publishedAt?: string
+  updatedAt?: string
+  tags?: string[]
+  jsonLd?: Record<string, unknown>
+  robots?: string
+}
+
+function absolute(path: string): string {
+  if (path.startsWith('http://') || path.startsWith('https://')) return path
+  const base = SITE.url.replace(/\/$/, '')
+  const p = path.startsWith('/') ? path : `/${path}`
+  return `${base}${p}`
+}
+
+export function getPageMeta(pathname: string): PageMeta {
+  const path = pathname.replace(/\/+$/, '') || '/'
+
+  if (path === '/') {
+    return {
+      title: SITE.title,
+      description: SITE.description,
+      canonical: absolute('/'),
+      ogType: 'website',
+      ogImage: absolute(SITE.ogImage),
+      jsonLd: {
+        '@context': 'https://schema.org',
+        '@type': 'Person',
+        name: SITE.author,
+        url: SITE.url,
+        sameAs: [],
+        jobTitle: 'Doctoral Researcher',
+        affiliation: { '@type': 'Organization', name: 'University of Helsinki' },
+      },
+    }
+  }
+
+  if (path === '/blog') {
+    return {
+      title: `Writing — ${SITE.name}`,
+      description:
+        'Long-form notes on AI serving, quantization, and the machine-learning systems I build.',
+      canonical: absolute('/blog'),
+      ogType: 'website',
+      ogImage: absolute(SITE.ogImage),
+      jsonLd: {
+        '@context': 'https://schema.org',
+        '@type': 'Blog',
+        url: absolute('/blog'),
+        name: `${SITE.name} — Writing`,
+        author: { '@type': 'Person', name: SITE.author, url: SITE.url },
+        blogPost: listPosts().map((p) => ({
+          '@type': 'BlogPosting',
+          url: absolute(p.permalink),
+          headline: p.title,
+          datePublished: p.publishedAt,
+        })),
+      },
+    }
+  }
+
+  const blogMatch = path.match(/^\/blog\/([a-z0-9-]+)$/)
+  if (blogMatch) {
+    const slug = blogMatch[1]
+    const post = getPost(slug)
+    if (post) return metaForPost(post)
+  }
+
+  return {
+    title: SITE.title,
+    description: SITE.description,
+    canonical: absolute(path),
+    ogType: 'website',
+    ogImage: absolute(SITE.ogImage),
+  }
+}
+
+function metaForPost(post: Post): PageMeta {
+  const canonical = absolute(post.permalink)
+  return {
+    title: `${post.title} — ${SITE.name}`,
+    description: post.summary,
+    canonical,
+    ogType: 'article',
+    ogImage: absolute(post.cover ?? SITE.ogImage),
+    publishedAt: post.publishedAt,
+    updatedAt: post.updatedAt,
+    tags: post.tags,
+    robots: post.status === 'draft' ? 'noindex,nofollow' : undefined,
+    jsonLd: {
+      '@context': 'https://schema.org',
+      '@type': 'BlogPosting',
+      headline: post.title,
+      description: post.summary,
+      datePublished: post.publishedAt,
+      dateModified: post.updatedAt ?? post.publishedAt,
+      author: { '@type': 'Person', name: SITE.author, url: SITE.url },
+      mainEntityOfPage: canonical,
+      url: canonical,
+      image: absolute(post.cover ?? SITE.ogImage),
+      keywords: post.tags?.join(', '),
+      articleSection: post.category,
+    },
+  }
+}
+
+export function renderMetaTags(meta: PageMeta): string {
+  const esc = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const lines: string[] = []
+  lines.push(`<title>${esc(meta.title)}</title>`)
+  lines.push(`<meta name="description" content="${esc(meta.description)}" />`)
+  lines.push(`<link rel="canonical" href="${esc(meta.canonical)}" />`)
+  if (meta.robots) lines.push(`<meta name="robots" content="${esc(meta.robots)}" />`)
+  // Open Graph
+  lines.push(`<meta property="og:type" content="${meta.ogType}" />`)
+  lines.push(`<meta property="og:url" content="${esc(meta.canonical)}" />`)
+  lines.push(`<meta property="og:title" content="${esc(meta.title)}" />`)
+  lines.push(`<meta property="og:description" content="${esc(meta.description)}" />`)
+  lines.push(`<meta property="og:image" content="${esc(meta.ogImage)}" />`)
+  lines.push(`<meta property="og:site_name" content="${esc(SITE.name)}" />`)
+  lines.push(`<meta property="og:locale" content="${SITE.locale}" />`)
+  if (meta.publishedAt)
+    lines.push(`<meta property="article:published_time" content="${meta.publishedAt}" />`)
+  if (meta.updatedAt)
+    lines.push(`<meta property="article:modified_time" content="${meta.updatedAt}" />`)
+  for (const tag of meta.tags ?? []) {
+    lines.push(`<meta property="article:tag" content="${esc(tag)}" />`)
+  }
+  // Twitter
+  lines.push(`<meta name="twitter:card" content="summary_large_image" />`)
+  lines.push(`<meta name="twitter:url" content="${esc(meta.canonical)}" />`)
+  lines.push(`<meta name="twitter:title" content="${esc(meta.title)}" />`)
+  lines.push(`<meta name="twitter:description" content="${esc(meta.description)}" />`)
+  lines.push(`<meta name="twitter:image" content="${esc(meta.ogImage)}" />`)
+  lines.push(`<meta name="twitter:creator" content="${SITE.twitter}" />`)
+  if (meta.jsonLd) {
+    // JSON.stringify escapes the dangerous chars enough for a <script> body,
+    // but we also defensively escape </script to avoid accidental tag break.
+    const body = JSON.stringify(meta.jsonLd).replace(/<\/script/gi, '<\\/script')
+    lines.push(`<script type="application/ld+json">${body}</script>`)
+  }
+  return lines.map((l) => `    ${l}`).join('\n')
+}
