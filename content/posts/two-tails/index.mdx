@@ -1,0 +1,177 @@
+---
+title: 'Two tails: saturation and quantization'
+slug: two-tails
+publishedAt: 2026-04-21
+summary: Serving an ML model stacks two very different tail risks — queue saturation near ρ=1 and rounding flips at low bit widths. Both turn well-behaved averages into production incidents. Here is a tour of the math, the failure modes, and what the knobs actually do.
+tags: [serving, quantization, queuing, reliability]
+category: Notes
+status: published
+estimatedReadMin: 9
+---
+
+# Two tails: saturation and quantization
+
+Two of the failure modes I see most often in model-serving postmortems have
+nothing in common on the surface. One is a queuing problem: the box is fine at
+the mean, but p99 latency explodes as we push utilisation towards 1. The other
+is a numerics problem: the model is fine at full precision, but a quantized
+copy starts disagreeing with it on a small subset of inputs and the top-1
+accuracy drifts. Different teams, different dashboards, different oncalls.
+
+And yet both are **tail phenomena** — the mean is benign, the interesting mass
+is at the edge of the distribution — and the intuition from one transfers
+cleanly to the other. This post walks through both, with the same two knobs on
+every plot: crank them, watch the tail move.
+
+<Callout tone="insight" title="The thing to take away">
+  In a production system, the mean is a soothing lie. Capacity planning lives
+  in the tail of the response-time distribution; accuracy of a quantized model
+  lives in the tail of the per-weight perturbation distribution. If your
+  monitoring only shows averages, both failure modes will surprise you.
+</Callout>
+
+## Tail one: queue saturation
+
+A single request-serving replica, in the limit where requests are
+memoryless and service time is exponential, is textbook M/M/1. Arrivals at
+rate $\lambda$, service at rate $\mu$, one server, infinite queue.
+
+<Figure
+  src="/posts/two-tails/mm1-queue.svg"
+  alt="A single-server queue with arrivals at rate lambda, a waiting line, a server at rate mu, and departures."
+  caption="An M/M/1 replica: one server, one queue, utilisation ρ = λ/μ."
+/>
+
+The survival function of the response time $T$ — the probability that a given
+request takes longer than $t$ — has a very tidy closed form:
+
+$$
+P(T > t) = e^{-(\mu - \lambda)\, t},
+$$
+
+which is _only_ well-defined when $\lambda < \mu$. As $\rho = \lambda / \mu$
+approaches 1, the exponent $\mu - \lambda$ collapses towards zero and the
+survival curve flattens — a unit of time out in the tail carries far more
+probability than the mean would suggest. The p99 moves faster than the
+average.
+
+<ParamPlot
+  compute="serving.latencyTail"
+  title="P(T > t) for a single M/M/1 replica"
+  caption="Solid curve: survival probability. Vertical line: your SLA. Hatched band: the region past p99 — this is where pages come from."
+  kind="area"
+  xLabel="latency (ms)"
+  yLabel="P(T > t)"
+  params={{ qps: 120, serviceMs: 6, slaMs: 50, rangeMs: 250 }}
+  controls={[
+    { kind: 'slider', param: 'qps', label: 'Arrival rate (qps)', min: 10, max: 200, step: 5, format: 'int', hint: 'Push this up to load the server' },
+    { kind: 'slider', param: 'serviceMs', label: 'Service time (ms)', min: 1, max: 20, step: 0.5, format: 'decimal', hint: 'Smaller = faster server' },
+    { kind: 'slider', param: 'slaMs', label: 'SLA (ms)', min: 10, max: 300, step: 5, format: 'int' },
+    { kind: 'slider', param: 'rangeMs', label: 'x-axis max (ms)', min: 50, max: 600, step: 10, format: 'int' },
+  ]}
+/>
+
+Two experiments worth running in the plot above:
+
+1. Pin service time at 6 ms and slide the arrival rate from 80 → 160 qps. The
+   mean barely moves; the area past the SLA grows non-linearly.
+2. Hold the arrival rate steady and cut service time by 1 ms. Watch the whole
+   curve pull left. A tiny improvement in the body of the distribution buys a
+   large improvement in the tail — which is the classic argument for sweating
+   the small optimisations in hot code paths.
+
+<Callout tone="aside" title="Why M/M/1 is a lie you can use">
+  Real traffic is bursty, not Poisson. Real service time is rarely exponential.
+  Real load balancers spread across N replicas, not 1. All true. But the shape
+  of the result — that utilisation past ~0.8 is where pain compounds — survives
+  every generalisation I have reached for. M/M/1 is the minimum-viable tool for
+  building the intuition. Keep it; swap it for something richer only when a
+  decision actually hinges on the richer model.
+</Callout>
+
+## Tail two: quantization flips
+
+Now the other kind of tail. Take a trained weight $w$ (in grid units, so the
+quantization grid lives at the integers) and add a small Gaussian perturbation
+$\epsilon \sim \mathcal{N}(0, \sigma^2)$. Round-to-nearest quantization snaps
+$w + \epsilon$ to the nearest integer level. The weight _flips_ — rounds to a
+different level than it would have without the perturbation — exactly when
+$|\epsilon| > d(w)$, where $d(w)$ is the distance from $w$ to the nearest
+half-integer boundary.
+
+The per-weight flip probability is therefore
+
+$$
+p_\text{flip}(w) = 2\left(1 - \Phi\!\left(\frac{d(w)}{\sigma}\right)\right),
+$$
+
+which is smallest for weights that sit near the centre of a bin ($d(w)$ large)
+and largest for weights that sit right on a boundary ($d(w) \to 0$, so
+$p_\text{flip} \to 1$).
+
+<ParamPlot
+  compute="gptq.flippingRange"
+  title="Flip probability vs. weight value"
+  caption="Teal curve: per-weight flip probability. Hatched bands: the 'flipping range' — weights where flip probability is above the chosen threshold."
+  kind="line"
+  xLabel="weight (grid units)"
+  yLabel="flip probability"
+  params={{ bits: 4, sigma: 0.3, threshold: 0.3, range: 3 }}
+  controls={[
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 8, step: 1, format: 'int', hint: 'Grid levels = 2^bits' },
+    { kind: 'slider', param: 'sigma', label: 'Noise σ', min: 0.02, max: 0.8, step: 0.01, format: 'decimal', hint: 'In grid units' },
+    { kind: 'slider', param: 'threshold', label: 'Threshold τ', min: 0.05, max: 0.95, step: 0.05, format: 'percent' },
+    { kind: 'slider', param: 'range', label: 'Domain', min: 1, max: 5, step: 1, format: 'int', hint: '± grid units shown' },
+  ]}
+/>
+
+Things to notice:
+
+- The curve has a tooth for every bin boundary. Drop bits from 4 to 2 and the
+  teeth move wider apart (the grid coarsens) but each tooth has the same
+  peak — because the geometry near a boundary is local.
+- Raise $\sigma$ past roughly half a grid unit and every tooth touches 1.
+  At that point the grid has stopped mattering: the noise dominates the
+  quantization. This is the regime where aggressive bitwidth reduction quietly
+  degrades accuracy on the hard examples while the average-case metric stays
+  flat.
+
+## Why the analogy is more than cute
+
+Superficially these are two different animals: one lives in a load balancer,
+the other in a kernel. But in each case the median behaviour is fine, the
+metric you are optimising is also fine, and the damage shows up in the shape of
+the distribution, at the edge, on a subset of the inputs that happen to land in
+the bad region. If you treat them the same way at design time — plot the tail,
+pick a threshold, budget for it — you get fewer surprises at 3 a.m.
+
+<LoopedSVG
+  preset="scan"
+  title="Scan"
+  caption="A decorative interstitial — same rhythm, different phase."
+/>
+
+## The knobs that actually help
+
+- For queue saturation: provision for **utilisation**, not for average QPS.
+  Targeting $\rho = 0.7$ instead of $0.9$ costs more boxes but dramatically
+  shrinks the area past your SLA.
+- For quantization flips: don't pick bits by measuring average loss. Measure
+  **flip rate** at the weights that sit near boundaries, and keep a higher
+  precision (or a small FP16 fallback) for the layers where the flipping
+  range swamps the safe region.
+
+Both are the same move: refuse to let the mean set the budget.
+
+## Check yourself
+
+<Quiz
+  question="You bump a serving replica's arrival rate from 0.7 μ to 0.9 μ. Service time is unchanged. Which statement best describes what happens to the p99?"
+  choices={[
+    { text: 'It grows by roughly 30% because utilisation grew by roughly 30%.' },
+    { text: 'It roughly triples, because the survival curve flattens as the exponent μ - λ shrinks.', correct: true },
+    { text: 'It stays about the same — the service time is the only thing that affects p99.' },
+    { text: 'It shrinks, because the queue fills and amortises per-request overhead.' },
+  ]}
+  explanation="P(T > t) = exp(-(μ - λ) t). Going from ρ=0.7 to ρ=0.9 at fixed μ means the exponent goes from 0.3 μ to 0.1 μ — a 3× smaller decay rate, so the t at which P(T > t) crosses any fixed level roughly triples. Utilisation is a non-linear knob on the tail, not a linear one."
+/>
