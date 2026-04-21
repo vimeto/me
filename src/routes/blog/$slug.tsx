@@ -11,9 +11,7 @@ export default function BlogPost() {
       <section className="min-h-screen px-6 py-24">
         <div className="max-w-3xl mx-auto">
           <h1 className="text-2xl font-bold mb-4">Not found</h1>
-          <p className="text-sm text-muted-foreground">
-            No post exists at this URL.
-          </p>
+          <p className="text-sm text-muted-foreground">No post exists at this URL.</p>
         </div>
       </section>
     )

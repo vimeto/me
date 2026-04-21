@@ -1,6 +1,8 @@
 import { Link } from 'react-router'
 import type { ReactNode } from 'react'
+import { MDXProvider } from '@mdx-js/react'
 import type { Post } from '@/schemas/post'
+import { mdxComponents } from '../registry'
 
 type Props = {
   meta: Post
@@ -33,7 +35,9 @@ export function PostLayout({ meta, children }: Props) {
           )}
         </div>
       </header>
-      <div className="prose prose-slate dark:prose-invert max-w-none">{children}</div>
+      <div className="prose prose-slate dark:prose-invert max-w-none">
+        <MDXProvider components={mdxComponents}>{children}</MDXProvider>
+      </div>
     </article>
   )
 }

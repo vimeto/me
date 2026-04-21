@@ -15,6 +15,9 @@ dist-ssr
 # Blog content
 content/drafts/
 
+# Generated artifacts
+registry-catalog.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

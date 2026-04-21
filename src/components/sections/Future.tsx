@@ -24,8 +24,13 @@ export function Future() {
               <div>
                 <h4 className="font-bold mb-2">Goals</h4>
                 <ul className="space-y-2">
-                  <li>• Ship a “cognitive core” prototype: small model, strong tool-use, minimal memorization</li>
-                  <li>• Validate collaborative GRPO-style RL with on-device rollouts + cloud updates</li>
+                  <li>
+                    • Ship a “cognitive core” prototype: small model, strong tool-use, minimal
+                    memorization
+                  </li>
+                  <li>
+                    • Validate collaborative GRPO-style RL with on-device rollouts + cloud updates
+                  </li>
                   <li>• Deliver code + evals that teams can extend to production</li>
                 </ul>
               </div>
@@ -33,7 +38,10 @@ export function Future() {
               <div>
                 <h4 className="font-bold mb-2">Timeline</h4>
                 <ul className="space-y-2">
-                  <li>• Dec 2025: ICDCS submission for collaborative fine-tuning (edge adapters + cloud backbones)</li>
+                  <li>
+                    • Dec 2025: ICDCS submission for collaborative fine-tuning (edge adapters +
+                    cloud backbones)
+                  </li>
                   <li>• Early 2026: GRPO-style RL manuscript; internship start</li>
                   <li>• Early 2027: PhD defense</li>
                 </ul>
@@ -45,9 +53,10 @@ export function Future() {
             <h3 className="text-sm font-bold uppercase tracking-wider mb-4">Long-term Vision</h3>
             <Separator className="mb-4 bg-border" />
             <p className="text-sm leading-relaxed">
-              Build a deployable “cognitive core” that uses tools and retrieval to stay small, private,
-              and responsive on billions of devices. Publish the empirical recipes—benchmarks, rollout
-              tooling, and edge/cloud split patterns—that make that possible.
+              Build a deployable “cognitive core” that uses tools and retrieval to stay small,
+              private, and responsive on billions of devices. Publish the empirical
+              recipes—benchmarks, rollout tooling, and edge/cloud split patterns—that make that
+              possible.
             </p>
           </div>
         </motion.div>

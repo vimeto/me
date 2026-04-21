@@ -84,16 +84,19 @@ export function Background() {
           </div>
 
           <div className="mb-12">
-            <h3 className="text-sm font-bold uppercase tracking-wider mb-6">Applied / Embodied Work</h3>
+            <h3 className="text-sm font-bold uppercase tracking-wider mb-6">
+              Applied / Embodied Work
+            </h3>
             <Separator className="mb-6 bg-border" />
             <div className="space-y-4 text-sm">
               <p className="border border-border p-4">
-                Built a go-kart from scratch (moped engine) — practical systems intuition for how parts
-                interact under real constraints.
+                Built a go-kart from scratch (moped engine) — practical systems intuition for how
+                parts interact under real constraints.
               </p>
               <p className="border border-border p-4">
                 Ran a small construction company for three summers with one employee — renovations,
-                painting, and small builds; learned end-to-end delivery and hands-on project management.
+                painting, and small builds; learned end-to-end delivery and hands-on project
+                management.
               </p>
             </div>
           </div>

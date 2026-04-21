@@ -16,9 +16,7 @@ export default function BlogIndex() {
     <section className="min-h-screen px-6 py-24">
       <div className="max-w-3xl mx-auto">
         <h1 className="text-2xl font-bold mb-8">WRITING</h1>
-        {posts.length === 0 && (
-          <p className="text-sm text-muted-foreground">No posts yet.</p>
-        )}
+        {posts.length === 0 && <p className="text-sm text-muted-foreground">No posts yet.</p>}
         <div className="space-y-6">
           {posts.map((post) => (
             <article key={post.slug} className="border-b border-border pb-6">
@@ -28,10 +26,7 @@ export default function BlogIndex() {
                     {post.title}
                   </Link>
                 </h2>
-                <time
-                  dateTime={post.publishedAt}
-                  className="text-sm text-muted-foreground ml-4"
-                >
+                <time dateTime={post.publishedAt} className="text-sm text-muted-foreground ml-4">
                   {formatDate(post.publishedAt)}
                 </time>
               </div>

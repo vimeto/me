@@ -4,19 +4,24 @@ import { Separator } from '@/components/ui/separator'
 const researchAreas = [
   {
     title: 'Cognitive Core',
-    question: 'How do we build compact models that reason well and use tools instead of memorizing facts?',
-    method: 'Train/evaluate small models with retrieval + tool-use scaffolds; stress-test reasoning vs. recall',
+    question:
+      'How do we build compact models that reason well and use tools instead of memorizing facts?',
+    method:
+      'Train/evaluate small models with retrieval + tool-use scaffolds; stress-test reasoning vs. recall',
     output: 'Blueprint for tool-using “cognitive core” models deployable on devices',
   },
   {
     title: 'Edge/Cloud Collaboration',
-    question: 'What’s the right split between on-device adapters and server backbones for privacy + speed?',
-    method: 'Adapters that can skip transformer layers on-device while frozen backbones run in the cloud',
+    question:
+      'What’s the right split between on-device adapters and server backbones for privacy + speed?',
+    method:
+      'Adapters that can skip transformer layers on-device while frozen backbones run in the cloud',
     output: 'Latency/quality tradeoff studies and open-source reference pipelines',
   },
   {
     title: 'RL for Agents on Devices',
-    question: 'How can we run RL (GRPO-style) efficiently with on-device rollouts and verifiable rewards?',
+    question:
+      'How can we run RL (GRPO-style) efficiently with on-device rollouts and verifiable rewards?',
     method: 'Asynchronous rollout collection on edge hardware, off-policy updates in the cloud',
     output: 'Benchmarks + recipes for on-device agent training',
   },
@@ -40,25 +45,38 @@ export function Research() {
 
           <div className="mb-12">
             <p className="text-lg leading-relaxed">
-              I focus on distributed LLM inference and small, tool-using models that can live on devices.
-              The goal: a “cognitive core” that reasons well, uses tools, and keeps most knowledge offloaded
-              to retrieval instead of parameters. I got into ML early—high-school research on data augmentation
-              for speech recognition—and I still work empirically: publishing benchmarks, code, and measurements
-              on real consumer hardware (iPhone, MacBook, edge servers).
+              I focus on distributed LLM inference and small, tool-using models that can live on
+              devices. The goal: a “cognitive core” that reasons well, uses tools, and keeps most
+              knowledge offloaded to retrieval instead of parameters. I got into ML
+              early—high-school research on data augmentation for speech recognition—and I still
+              work empirically: publishing benchmarks, code, and measurements on real consumer
+              hardware (iPhone, MacBook, edge servers).
             </p>
             <div className="mt-6 p-4 border border-border">
               <h4 className="font-bold text-sm mb-2">Papers in Review</h4>
               <ul className="text-sm space-y-1">
-                <li>• LLM Inference on Edge — Survey (first author, 180 references, submitted Nov 2025)</li>
-                <li>• Measuring the True Cost of On-Device Agents (4 devices, 4 models, 300 tasks — PerCom 2026 submission)</li>
-                <li>• Collaborative Fine-Tuning: Edge Adapters + Cloud Backbones (ICDCS Dec 2025 submission)</li>
+                <li>
+                  • LLM Inference on Edge — Survey (first author, 180 references, submitted Nov
+                  2025)
+                </li>
+                <li>
+                  • Measuring the True Cost of On-Device Agents (4 devices, 4 models, 300 tasks —
+                  PerCom 2026 submission)
+                </li>
+                <li>
+                  • Collaborative Fine-Tuning: Edge Adapters + Cloud Backbones (ICDCS Dec 2025
+                  submission)
+                </li>
               </ul>
             </div>
 
             <div className="mt-4 p-4 border border-border">
               <h4 className="font-bold text-sm mb-2">Theses</h4>
               <ul className="text-sm space-y-1">
-                <li>• Determining User Preference Profiles from Email And User Engagement Data (M.Sc., 2024)</li>
+                <li>
+                  • Determining User Preference Profiles from Email And User Engagement Data (M.Sc.,
+                  2024)
+                </li>
                 <li>• Lossless Compression of Deep Neural Networks (B.Sc., 2024)</li>
               </ul>
             </div>

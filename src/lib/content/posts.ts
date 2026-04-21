@@ -38,9 +38,7 @@ function byDateDesc(a: Post, b: Post): number {
 }
 
 export function listPosts(opts: { includeDrafts?: boolean } = {}): Post[] {
-  return allPosts
-    .filter((p) => opts.includeDrafts || p.status === 'published')
-    .sort(byDateDesc)
+  return allPosts.filter((p) => opts.includeDrafts || p.status === 'published').sort(byDateDesc)
 }
 
 export function getPost(slug: string): Post | undefined {
