@@ -1,6 +1,7 @@
 import { useParams } from 'react-router'
 import { getPost } from '@/lib/content/posts'
 import { PostLayout } from '@/components/mdx/layout/PostLayout'
+import { Comments } from '@/components/comments/Comments'
 
 export default function BlogPost() {
   const { slug } = useParams<{ slug: string }>()
@@ -22,6 +23,7 @@ export default function BlogPost() {
   return (
     <PostLayout meta={post}>
       <Body />
+      {post.slug && <Comments slug={post.slug} />}
     </PostLayout>
   )
 }

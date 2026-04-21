@@ -3,6 +3,7 @@ import { RootLayout } from '@/components/layout/RootLayout'
 import Home from '@/pages/Home'
 import BlogIndex from '@/routes/blog/index'
 import BlogPost from '@/routes/blog/$slug'
+import AdminPage from '@/routes/admin/index'
 import { listPosts } from '@/lib/content/posts'
 
 export const routes: RouteObject[] = [
@@ -12,6 +13,10 @@ export const routes: RouteObject[] = [
       { path: '/', element: <Home /> },
       { path: '/blog', element: <BlogIndex /> },
       { path: '/blog/:slug', element: <BlogPost /> },
+      // `/admin` is dynamic + Cloudflare-Access-gated. It's mounted in the
+      // router so the SPA can serve it, but we deliberately omit it from
+      // `getAllStaticPaths` so no public HTML snapshot is ever generated.
+      { path: '/admin', element: <AdminPage /> },
     ],
   },
 ]
