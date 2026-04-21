@@ -74,6 +74,10 @@ const cases: Case[] = [
     file: 'tests/fixtures/quiz-too-few-choices.mdx',
     expect: { ok: false, codes: ['schema'] },
   },
+  {
+    file: 'tests/fixtures/loopedsvg-bad-preset.mdx',
+    expect: { ok: false, codes: ['schema'] },
+  },
 ]
 
 function fmt(issue: Issue): string {

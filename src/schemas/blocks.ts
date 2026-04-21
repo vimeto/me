@@ -99,6 +99,21 @@ export const QuizProps = z
   })
 export type QuizProps = z.infer<typeof QuizProps>
 
+// LoopedSVG — curated set of self-contained animated SVG loops. Each preset
+// is an opinionated little explainer graphic; posts just pick one by name and
+// optionally override duration.
+export const LoopedSVGProps = z
+  .object({
+    preset: z.enum(['pulse', 'wave', 'orbit', 'scan']),
+    duration: z.number().positive().max(30).default(3),
+    title: z.string().optional(),
+    caption: z.string().optional(),
+    height: z.number().positive().max(600).optional(),
+    paused: z.boolean().default(false),
+  })
+  .strict()
+export type LoopedSVGProps = z.infer<typeof LoopedSVGProps>
+
 // Validator-side name → schema map. Kept free of React imports so the
 // validator script can load it in Node without pulling the component tree.
 export const blockSchemas = {
@@ -106,6 +121,7 @@ export const blockSchemas = {
   Callout: CalloutProps,
   ParamPlot: ParamPlotProps,
   Quiz: QuizProps,
+  LoopedSVG: LoopedSVGProps,
 } as const
 
 export type BlockName = keyof typeof blockSchemas
