@@ -1,0 +1,30 @@
+---
+title: A valid fixture
+slug: good-post
+publishedAt: 2026-04-21
+summary: Should pass validation cleanly — every block, every literal-prop shape.
+tags: [test]
+category: Lab Notes
+status: published
+estimatedReadMin: 1
+---
+
+# Heading
+
+A paragraph with some text and $\alpha$ inline math.
+
+<Callout tone="insight" title="Insight">
+  Callout renders fine.
+</Callout>
+
+<Figure src="/cover.png" alt="cover image" caption="A caption" />
+
+<ParamPlot
+  compute="gptq.flippingRange"
+  title="Flip"
+  kind="line"
+  params={{ bits: 3, sigma: 0.25, threshold: 0.3, range: 3 }}
+  controls={[
+    { kind: "slider", param: "bits", label: "Bits", min: 2, max: 8, step: 1, format: "int" }
+  ]}
+/>
