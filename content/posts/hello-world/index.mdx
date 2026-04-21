@@ -71,6 +71,27 @@ export const computeRegistry: Record<string, ComputeFn> = {
   post — only the `compute` key and `params` change.
 </Callout>
 
+## A second compute: M/M/1 tail latency
+
+The same `ParamPlot` block, a different compute key. Drag the arrival rate up
+against the service rate to watch the tail blow up as $\rho \to 1$.
+
+<ParamPlot
+  compute="serving.latencyTail"
+  title="P(response time > t) for M/M/1"
+  caption="Solid curve: survival probability. Vertical line: SLA. Hatched band: beyond p99."
+  kind="area"
+  xLabel="latency (ms)"
+  yLabel="P(T > t)"
+  params={{ qps: 120, serviceMs: 6, slaMs: 50, rangeMs: 200 }}
+  controls={[
+    { kind: "slider", param: "qps", label: "Arrival rate (qps)", min: 10, max: 200, step: 5, format: "int" },
+    { kind: "slider", param: "serviceMs", label: "Service time (ms)", min: 1, max: 20, step: 0.5, format: "decimal" },
+    { kind: "slider", param: "slaMs", label: "SLA (ms)", min: 10, max: 300, step: 5, format: "int" },
+    { kind: "slider", param: "rangeMs", label: "x-axis max (ms)", min: 50, max: 600, step: 10, format: "int" }
+  ]}
+/>
+
 ## Check yourself
 
 <Quiz

@@ -29,6 +29,14 @@ A paragraph with some text and $\alpha$ inline math.
   ]}
 />
 
+<ParamPlot
+  compute="serving.latencyTail"
+  title="Latency"
+  kind="area"
+  params={{ qps: 120, serviceMs: 6, slaMs: 50, rangeMs: 200 }}
+  controls={[]}
+/>
+
 <Quiz
   question="Pick the correct one."
   choices={[
