@@ -1,27 +1,22 @@
-import { Navigation } from '@/components/layout/Navigation'
-import { Hero } from '@/components/sections/Hero'
-import { Research } from '@/components/sections/Research'
-import { Projects } from '@/components/sections/Projects'
-import { Background } from '@/components/sections/Background'
-import { Future } from '@/components/sections/Future'
-import { Writing } from '@/components/sections/Writing'
-import { Contact } from '@/components/sections/Contact'
+import { createBrowserRouter, RouterProvider } from 'react-router'
+import { RootLayout } from '@/components/layout/RootLayout'
+import Home from '@/pages/Home'
+import BlogIndex from '@/routes/blog/index'
+import BlogPost from '@/routes/blog/$slug'
+
+const router = createBrowserRouter([
+  {
+    element: <RootLayout />,
+    children: [
+      { path: '/', element: <Home /> },
+      { path: '/blog', element: <BlogIndex /> },
+      { path: '/blog/:slug', element: <BlogPost /> },
+    ],
+  },
+])
 
 function App() {
-  return (
-    <>
-      <Navigation />
-      <main className="pt-16">
-        <Hero />
-        <Research />
-        <Projects />
-        <Background />
-        <Future />
-        <Writing />
-        <Contact />
-      </main>
-    </>
-  )
+  return <RouterProvider router={router} />
 }
 
 export default App

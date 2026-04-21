@@ -1,0 +1,41 @@
+---
+title: Hello, blog
+slug: hello-world
+publishedAt: 2026-04-21
+summary: A first post to verify the MDX + Zod + React Router scaffolding of blog v2.
+tags: [meta]
+category: Lab Notes
+status: published
+estimatedReadMin: 2
+---
+
+# Hello, blog
+
+This is the placeholder post that wires up Phase 0 of the v2 blog system. If you
+can read this with proper typography, the MDX → React Router pipeline works end
+to end.
+
+## What runs here
+
+- **MDX** compiled by `@mdx-js/rollup`, loaded via `import.meta.glob`.
+- **Frontmatter** validated at import time by a strict Zod schema.
+- **Tailwind typography** renders prose without per-post styling.
+- **KaTeX** is available for inline math like $E = mc^2$ and blocks:
+
+$$
+\operatorname{softmax}(x)_i = \frac{e^{x_i}}{\sum_j e^{x_j}}
+$$
+
+- **Shiki** highlights code blocks at build time:
+
+```ts
+function fibonacci(n: number): number {
+  return n < 2 ? n : fibonacci(n - 1) + fibonacci(n - 2)
+}
+```
+
+## What's next
+
+Phase 1 adds the interactive block registry (starting with `<GPTQViz />`). Phase
+2 adds the validator that statically checks every MDX file against the Zod
+schemas. Phase 5 adds the Cloudflare Worker backend for drafts + comments.

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Sun, Moon } from 'lucide-react'
+import { useLocation, useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 
 const sections = [
@@ -15,6 +16,9 @@ const sections = [
 export function Navigation() {
   const [activeSection, setActiveSection] = useState('hero')
   const [isDark, setIsDark] = useState(false)
+  const location = useLocation()
+  const navigate = useNavigate()
+  const onHome = location.pathname === '/'
 
   useEffect(() => {
     const isDarkMode =
@@ -50,7 +54,7 @@ export function Navigation() {
     })
 
     return () => observer.disconnect()
-  }, [])
+  }, [onHome])
 
   const toggleDarkMode = () => {
     const newDarkMode = !isDark
@@ -63,10 +67,12 @@ export function Navigation() {
     }
   }
 
-  const scrollToSection = (id: string) => {
-    const element = document.getElementById(id)
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth' })
+  const goToSection = (id: string) => {
+    if (onHome) {
+      const element = document.getElementById(id)
+      if (element) element.scrollIntoView({ behavior: 'smooth' })
+    } else {
+      navigate(`/#${id}`)
     }
   }
 
@@ -78,9 +84,9 @@ export function Navigation() {
             {sections.map(({ id, label }) => (
               <button
                 key={id}
-                onClick={() => scrollToSection(id)}
+                onClick={() => goToSection(id)}
                 className={`text-xs md:text-sm whitespace-nowrap transition-all ${
-                  activeSection === id
+                  onHome && activeSection === id
                     ? 'font-bold underline underline-offset-4'
                     : 'hover:underline underline-offset-4'
                 }`}
