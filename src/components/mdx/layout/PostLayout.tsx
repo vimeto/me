@@ -35,7 +35,7 @@ export function PostLayout({ meta, children }: Props) {
           )}
         </div>
       </header>
-      <div className="prose prose-slate dark:prose-invert max-w-none">
+      <div className="prose prose-slate dark:prose-invert max-w-none font-serif prose-lg prose-headings:font-sans prose-headings:tracking-tight prose-code:font-mono prose-pre:font-mono">
         <MDXProvider components={mdxComponents}>{children}</MDXProvider>
       </div>
     </article>

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { motion } from 'framer-motion'
+import { motion, useReducedMotion } from 'framer-motion'
 import { LoopedSVGProps } from '@/schemas/blocks'
 import { seriesAt, series } from '../theme/tokens'
 
@@ -169,12 +169,13 @@ const presets: Record<Preset, (p: { duration: number }) => React.ReactElement> =
 export function LoopedSVG(rawProps: unknown) {
   const props = LoopedSVGProps.parse(rawProps)
   const { preset, title, caption, height, paused: initialPaused } = props
+  const reducedMotion = useReducedMotion()
   const [paused, setPaused] = useState(initialPaused)
   const neutral = series.teal
   const Body = presets[preset]
-  // When paused, give the animation an effectively-forever duration so no frame
-  // progresses. It's simpler than swapping components and works with SSR.
-  const runningDuration = paused ? 1e7 : props.duration
+  // Respect prefers-reduced-motion: a tiny constant duration freezes the loop
+  // without unmounting motion components. Manual pause behaves the same way.
+  const runningDuration = paused || reducedMotion ? 1e7 : props.duration
 
   return (
     <figure className="not-prose my-6">

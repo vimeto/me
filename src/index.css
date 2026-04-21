@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,700&display=swap');
 @import 'katex/dist/katex.min.css';
 @tailwind base;
 @tailwind components;
@@ -25,6 +25,15 @@
   --border: 0 0 0;
   --input: 0 0 0;
   --ring: 0 0 0;
+
+  /* Per-series text tokens — same hue, light-background variant. Fills and
+     strokes are mode-agnostic and live in tokens.ts as literals. */
+  --s-teal-text: 15 118 110;
+  --s-amber-text: 180 83 9;
+  --s-magenta-text: 157 23 105;
+  --s-lime-text: 77 124 15;
+  --s-violet-text: 91 33 182;
+  --s-coral-text: 190 18 60;
 }
 
 .dark {
@@ -47,6 +56,14 @@
   --border: 255 255 255;
   --input: 255 255 255;
   --ring: 255 255 255;
+
+  /* Brighter series text for contrast on black. */
+  --s-teal-text: 94 234 212;
+  --s-amber-text: 252 211 77;
+  --s-magenta-text: 244 114 182;
+  --s-lime-text: 190 242 100;
+  --s-violet-text: 196 181 253;
+  --s-coral-text: 253 164 175;
 }
 
 * {
@@ -73,4 +90,15 @@ body {
 ::selection {
   background-color: rgb(var(--foreground));
   color: rgb(var(--background));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
