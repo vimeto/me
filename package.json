@@ -11,6 +11,8 @@
     "validate": "tsx scripts/validate-posts.ts",
     "validate:smoke": "tsx tests/validator.smoke.ts",
     "docs:registry": "tsx scripts/generate-registry-docs.ts",
+    "ladle:dev": "ladle serve",
+    "ladle:build": "ladle build",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -49,6 +51,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",
+    "@ladle/react": "^5.1.1",
     "@mdx-js/mdx": "^3.1.1",
     "@types/d3-array": "^3.2.2",
     "@types/mdx": "^2.0.13",
