@@ -91,39 +91,91 @@ ${sitemapUrls
 fs.writeFileSync(path.join(clientDir, 'sitemap.xml'), sitemap, 'utf8')
 console.log(`  generated sitemap.xml (${sitemapUrls.length} urls)`)
 
-// RSS feed
+// Feeds (RSS + JSON Feed 1.1). Both list the same posts — readers pick their
+// preferred format via <link rel="alternate"> discovery in the HTML head.
 const posts = listPosts()
+const siteBase = SITE.url.replace(/\/$/, '')
+
+// CDATA lets us include HTML (links, markup) in the description without a
+// second layer of escaping. We wrap summaries in CDATA now in anticipation of
+// ever bumping to `<content:encoded>` with rendered post HTML; today the
+// summary is plain text but the wrapping stays correct either way.
+function cdata(s) {
+  // Close any accidental nested CDATA end markers per the XML spec.
+  return `<![CDATA[${String(s).replace(/\]\]>/g, ']]]]><![CDATA[>')}]]>`
+}
+
 const feedItems = posts
   .map((p) => {
-    const link = `${SITE.url.replace(/\/$/, '')}${p.permalink}`
+    const link = `${siteBase}${p.permalink}`
     const pubDate = new Date(`${p.publishedAt}T00:00:00Z`).toUTCString()
+    const ogImage = `${siteBase}/og/${p.slug}.png`
+    const categories = (p.tags ?? [])
+      .map((t) => `      <category>${xmlEscape(t)}</category>`)
+      .join('\n')
     return `    <item>
       <title>${xmlEscape(p.title)}</title>
       <link>${xmlEscape(link)}</link>
       <guid isPermaLink="true">${xmlEscape(link)}</guid>
       <pubDate>${pubDate}</pubDate>
-      <description>${xmlEscape(p.summary)}</description>
-${(p.tags ?? []).map((t) => `      <category>${xmlEscape(t)}</category>`).join('\n')}
+      <dc:creator>${xmlEscape(SITE.author)}</dc:creator>
+      <description>${cdata(p.summary)}</description>
+      <enclosure url="${xmlEscape(ogImage)}" type="image/png" length="0" />
+${categories}
     </item>`
   })
   .join('\n')
 
 const lastBuild = new Date().toUTCString()
 const feed = `<?xml version="1.0" encoding="UTF-8"?>
-<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:dc="http://purl.org/dc/elements/1.1/">
   <channel>
     <title>${xmlEscape(`${SITE.name} — Writing`)}</title>
-    <link>${xmlEscape(SITE.url)}/blog</link>
-    <atom:link href="${xmlEscape(SITE.url)}/feed.xml" rel="self" type="application/rss+xml" />
+    <link>${xmlEscape(siteBase)}/blog</link>
+    <atom:link href="${xmlEscape(siteBase)}/feed.xml" rel="self" type="application/rss+xml" />
     <description>${xmlEscape(SITE.description)}</description>
     <language>en-us</language>
+    <managingEditor>noreply@${new URL(SITE.url).hostname} (${xmlEscape(SITE.author)})</managingEditor>
     <lastBuildDate>${lastBuild}</lastBuildDate>
+    <image>
+      <url>${xmlEscape(siteBase)}/og/default.png</url>
+      <title>${xmlEscape(`${SITE.name} — Writing`)}</title>
+      <link>${xmlEscape(siteBase)}/blog</link>
+    </image>
 ${feedItems}
   </channel>
 </rss>
 `
 fs.writeFileSync(path.join(clientDir, 'feed.xml'), feed, 'utf8')
 console.log(`  generated feed.xml (${posts.length} items)`)
+
+// JSON Feed 1.1 — https://www.jsonfeed.org/version/1.1/
+const jsonFeed = {
+  version: 'https://jsonfeed.org/version/1.1',
+  title: `${SITE.name} — Writing`,
+  home_page_url: `${siteBase}/blog`,
+  feed_url: `${siteBase}/feed.json`,
+  description: SITE.description,
+  icon: `${siteBase}/og/default.png`,
+  favicon: `${siteBase}/favicon.svg`,
+  language: 'en',
+  authors: [{ name: SITE.author, url: siteBase }],
+  items: posts.map((p) => ({
+    id: `${siteBase}${p.permalink}`,
+    url: `${siteBase}${p.permalink}`,
+    title: p.title,
+    summary: p.summary,
+    content_html: `<p>${p.summary}</p>`,
+    date_published: new Date(`${p.publishedAt}T00:00:00Z`).toISOString(),
+    date_modified: p.updatedAt
+      ? new Date(`${p.updatedAt}T00:00:00Z`).toISOString()
+      : new Date(`${p.publishedAt}T00:00:00Z`).toISOString(),
+    tags: p.tags ?? [],
+    image: `${siteBase}/og/${p.slug}.png`,
+  })),
+}
+fs.writeFileSync(path.join(clientDir, 'feed.json'), JSON.stringify(jsonFeed, null, 2), 'utf8')
+console.log(`  generated feed.json (${posts.length} items)`)
 
 // robots.txt (overwrite with consistent sitemap reference)
 const robots = `User-agent: *

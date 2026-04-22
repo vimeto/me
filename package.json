@@ -15,6 +15,7 @@
     "validate:smoke": "tsx tests/validator.smoke.ts",
     "pagefind:smoke": "tsx tests/pagefind.smoke.ts",
     "og:smoke": "tsx tests/og.smoke.ts",
+    "feeds:smoke": "tsx tests/feeds.smoke.ts",
     "docs:registry": "tsx scripts/generate-registry-docs.ts",
     "ladle:dev": "ladle serve",
     "ladle:build": "ladle build",
