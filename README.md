@@ -21,6 +21,12 @@ Blog posts live at `content/posts/<slug>/index.mdx`. Frontmatter is validated by
 
 No automation yet — `pnpm build` outputs `dist/` and I upload it. The target topology (Cloudflare Pages for the static site, Cloudflare Workers + D1 + R2 for drafts/comments) lives in `BLOG_V2_PLAN.md`.
 
+### Build-time env vars
+
+- `CF_WEB_ANALYTICS_TOKEN` — set in CI/production to inject the Cloudflare Web Analytics beacon into every prerendered page. Omit in dev to keep `dist/` free of third-party scripts.
+- `PAGEFIND_SKIP=1` — skip building the static search index (faster smoke builds).
+- `OG_SKIP=1` — skip Satori OG-image generation (first run fetches fonts from the jsdelivr fontsource CDN; subsequent runs are offline thanks to `scripts/.fonts-cache/`).
+
 ## Layout
 
 ```

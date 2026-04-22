@@ -11,6 +11,7 @@ import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { injectCloudflareBeacon } from './lib/inject-analytics.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
@@ -18,7 +19,17 @@ const clientDir = path.join(repoRoot, 'dist')
 const serverDir = path.join(repoRoot, 'dist-ssr')
 
 const templatePath = path.join(clientDir, 'index.html')
-const template = fs.readFileSync(templatePath, 'utf8')
+const rawTemplate = fs.readFileSync(templatePath, 'utf8')
+
+// Cloudflare Web Analytics — inject the beacon into every prerendered page
+// when CF_WEB_ANALYTICS_TOKEN is set at build time. In dev or when the env
+// var is missing, the script simply isn't emitted (no network traffic, no
+// attribution noise).
+const cfToken = process.env.CF_WEB_ANALYTICS_TOKEN
+const template = injectCloudflareBeacon(rawTemplate, cfToken)
+if (cfToken) {
+  console.log('  Cloudflare Web Analytics beacon: enabled')
+}
 
 const serverEntry = await import(pathToFileURL(path.join(serverDir, 'entry-server.js')).href)
 const { render, getAllStaticPaths, getPageMeta, renderMetaTags, SITE, listPosts } =
