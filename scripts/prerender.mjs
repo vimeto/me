@@ -134,6 +134,17 @@ Sitemap: ${SITE.url.replace(/\/$/, '')}/sitemap.xml
 fs.writeFileSync(path.join(clientDir, 'robots.txt'), robots, 'utf8')
 console.log('  wrote robots.txt')
 
+// OG PNG generation. Runs before pagefind so both end up under `dist/`.
+// Skippable with OG_SKIP=1 for offline smoke builds.
+if (process.env.OG_SKIP !== '1') {
+  try {
+    execFileSync('node', [path.join(__dirname, 'generate-og.mjs')], { stdio: 'inherit' })
+  } catch (err) {
+    console.error('  OG generation failed:', err)
+    process.exit(1)
+  }
+}
+
 // Pagefind static search index. Runs the `pagefind` CLI against `dist/` to
 // emit `dist/pagefind/*` — a self-contained search bundle the `/search` page
 // loads lazily at runtime. Set PAGEFIND_SKIP=1 to skip (useful for fast

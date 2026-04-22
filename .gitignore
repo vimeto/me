@@ -35,6 +35,9 @@ content/drafts/
 # Generated artifacts
 registry-catalog.json
 
+# Fetched fonts for Satori OG image generation (cached at build time)
+scripts/.fonts-cache/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
