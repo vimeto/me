@@ -55,6 +55,17 @@ export function getPageMeta(pathname: string): PageMeta {
     }
   }
 
+  if (path === '/search') {
+    return {
+      title: `Search — ${SITE.name}`,
+      description: `Search every post on ${SITE.name}.`,
+      canonical: absolute('/search'),
+      ogType: 'website',
+      ogImage: absolute(SITE.ogImage),
+      robots: 'noindex,follow',
+    }
+  }
+
   if (path === '/blog') {
     return {
       title: `Writing — ${SITE.name}`,

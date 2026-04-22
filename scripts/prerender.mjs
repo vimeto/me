@@ -7,6 +7,7 @@
 // Run after `vite build` (client) + `vite build --ssr` (server). See the
 // `build` script in package.json.
 
+import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -132,3 +133,21 @@ Sitemap: ${SITE.url.replace(/\/$/, '')}/sitemap.xml
 `
 fs.writeFileSync(path.join(clientDir, 'robots.txt'), robots, 'utf8')
 console.log('  wrote robots.txt')
+
+// Pagefind static search index. Runs the `pagefind` CLI against `dist/` to
+// emit `dist/pagefind/*` — a self-contained search bundle the `/search` page
+// loads lazily at runtime. Set PAGEFIND_SKIP=1 to skip (useful for fast
+// smoke builds that don't need search).
+if (process.env.PAGEFIND_SKIP !== '1') {
+  try {
+    execFileSync(
+      'pnpm',
+      ['exec', 'pagefind', '--site', clientDir, '--output-path', path.join(clientDir, 'pagefind')],
+      { stdio: 'inherit' }
+    )
+    console.log('  generated pagefind/ search index')
+  } catch (err) {
+    console.error('  pagefind indexing failed:', err)
+    process.exit(1)
+  }
+}

@@ -16,7 +16,11 @@ function formatDate(iso: string): string {
 
 export function PostLayout({ meta, children }: Props) {
   return (
-    <article className="px-6 py-16 max-w-3xl mx-auto">
+    <article
+      className="px-6 py-16 max-w-3xl mx-auto"
+      data-pagefind-body
+      data-pagefind-meta={`title:${meta.title}`}
+    >
       <header className="mb-10 pb-6 border-b border-border">
         <Link
           to="/blog"

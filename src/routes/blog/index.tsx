@@ -1,4 +1,5 @@
 import { Link } from 'react-router'
+import { Search } from 'lucide-react'
 import { listPosts } from '@/lib/content/posts'
 
 function formatDate(iso: string): string {
@@ -15,7 +16,17 @@ export default function BlogIndex() {
   return (
     <section className="min-h-screen px-6 py-24">
       <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold mb-8">WRITING</h1>
+        <div className="flex items-center justify-between mb-8">
+          <h1 className="text-2xl font-bold">WRITING</h1>
+          <Link
+            to="/search"
+            className="inline-flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
+            aria-label="Search posts"
+          >
+            <Search className="h-4 w-4" aria-hidden="true" />
+            <span>Search</span>
+          </Link>
+        </div>
         {posts.length === 0 && <p className="text-sm text-muted-foreground">No posts yet.</p>}
         <div className="space-y-6">
           {posts.map((post) => (
