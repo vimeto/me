@@ -21,6 +21,8 @@
     "worker:dev": "wrangler dev --config worker/wrangler.toml",
     "worker:test": "tsx worker/tests/worker.test.ts",
     "worker:deploy": "wrangler deploy --config worker/wrangler.toml",
+    "mcp:blog-publisher": "tsx .claude/mcp/blog-publisher/src/server.ts",
+    "mcp:test": "tsx .claude/mcp/blog-publisher/tests/core.test.ts",
     "prepare": "husky"
   },
   "lint-staged": {
@@ -64,6 +66,7 @@
     "@eslint/js": "^9.33.0",
     "@ladle/react": "^5.1.1",
     "@mdx-js/mdx": "^3.1.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@playwright/test": "^1.59.1",
     "@types/d3-array": "^3.2.2",
     "@types/mdx": "^2.0.13",
