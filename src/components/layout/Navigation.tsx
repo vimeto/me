@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { Sun, Moon } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
@@ -16,6 +17,7 @@ const sections = [
 export function Navigation() {
   const [activeSection, setActiveSection] = useState('hero')
   const [isDark, setIsDark] = useState(false)
+  const [drawerOpen, setDrawerOpen] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   const onHome = location.pathname === '/'
@@ -56,6 +58,21 @@ export function Navigation() {
     return () => observer.disconnect()
   }, [onHome])
 
+  // Close the drawer on Escape and lock body scroll while open.
+  useEffect(() => {
+    if (!drawerOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setDrawerOpen(false)
+    }
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [drawerOpen])
+
   const toggleDarkMode = () => {
     const newDarkMode = !isDark
     setIsDark(newDarkMode)
@@ -68,6 +85,7 @@ export function Navigation() {
   }
 
   const goToSection = (id: string) => {
+    setDrawerOpen(false)
     if (onHome) {
       const element = document.getElementById(id)
       if (element) element.scrollIntoView({ behavior: 'smooth' })
@@ -77,34 +95,147 @@ export function Navigation() {
   }
 
   return (
-    <nav className="fixed top-0 left-0 right-0 z-50 bg-background border-b border-border">
-      <div className="max-w-5xl mx-auto px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3 md:gap-6 overflow-x-auto">
-            {sections.map(({ id, label }) => (
-              <button
-                key={id}
-                onClick={() => goToSection(id)}
-                className={`text-xs md:text-sm whitespace-nowrap transition-all ${
-                  onHome && activeSection === id
-                    ? 'font-bold underline underline-offset-4'
-                    : 'hover:underline underline-offset-4'
-                }`}
+    <>
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-background border-b border-border">
+        <div className="max-w-5xl mx-auto px-6 py-4">
+          <div className="flex items-center justify-between">
+            {/* Desktop: inline section list. Hidden on mobile. */}
+            <div className="hidden md:flex items-center gap-6 overflow-x-auto">
+              {sections.map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => goToSection(id)}
+                  className={`text-sm whitespace-nowrap transition-colors ${
+                    onHome && activeSection === id
+                      ? 'font-bold underline underline-offset-4 decoration-2 decoration-ink'
+                      : 'hover:underline underline-offset-4 decoration-1'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {/* Mobile: VT initials trigger. Decomposes V and T into 4 strokes;
+                V's left and T's top fade out while V's right and T's stem
+                rotate/translate into the two diagonals of an X. */}
+            <button
+              type="button"
+              onClick={() => setDrawerOpen((o) => !o)}
+              aria-label={drawerOpen ? 'Close navigation' : 'Open navigation'}
+              aria-expanded={drawerOpen}
+              className="md:hidden inline-flex items-center justify-center h-10 w-10 rounded-full border-2 border-foreground/80 bg-background text-foreground"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="h-5 w-5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth={2}
+                strokeLinecap="round"
+                aria-hidden="true"
               >
-                {label}
-              </button>
-            ))}
+                {/* V left stroke — fades when opening */}
+                <motion.line
+                  initial={false}
+                  animate={{ x1: 4, y1: 7, x2: 8, y2: 17, opacity: drawerOpen ? 0 : 1 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                />
+                {/* V right stroke — morphs into X's / diagonal */}
+                <motion.line
+                  initial={false}
+                  animate={
+                    drawerOpen ? { x1: 18, y1: 6, x2: 6, y2: 18 } : { x1: 12, y1: 7, x2: 8, y2: 17 }
+                  }
+                  transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+                />
+                {/* T top bar — fades when opening */}
+                <motion.line
+                  initial={false}
+                  animate={{ x1: 13, y1: 7, x2: 20, y2: 7, opacity: drawerOpen ? 0 : 1 }}
+                  transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                />
+                {/* T stem — morphs into X's \ diagonal */}
+                <motion.line
+                  initial={false}
+                  animate={
+                    drawerOpen
+                      ? { x1: 6, y1: 6, x2: 18, y2: 18 }
+                      : { x1: 16.5, y1: 7, x2: 16.5, y2: 17 }
+                  }
+                  transition={{ duration: 0.32, ease: [0.22, 1, 0.36, 1] }}
+                />
+              </svg>
+            </button>
+
+            {/* Dark mode toggle, always visible. */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleDarkMode}
+              aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="ml-4 border border-border hover:border-2 flex-shrink-0"
+            >
+              {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+            </Button>
           </div>
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={toggleDarkMode}
-            className="ml-4 border border-border hover:border-2 flex-shrink-0"
-          >
-            {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
         </div>
-      </div>
-    </nav>
+      </nav>
+
+      {/* Mobile drawer + backdrop. */}
+      <AnimatePresence>
+        {drawerOpen && (
+          <>
+            <motion.div
+              key="backdrop"
+              className="fixed inset-0 z-40 bg-foreground/40 md:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setDrawerOpen(false)}
+              aria-hidden="true"
+            />
+            <motion.aside
+              key="drawer"
+              role="dialog"
+              aria-label="Site navigation"
+              aria-modal="true"
+              className="fixed top-0 right-0 bottom-0 z-40 w-72 max-w-[85vw] bg-background border-l-2 border-foreground/80 shadow-2xl md:hidden"
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', stiffness: 420, damping: 38, mass: 0.7 }}
+            >
+              <div className="flex flex-col h-full pt-20 pb-8 px-6">
+                <ul className="flex flex-col gap-1">
+                  {sections.map(({ id, label }, i) => (
+                    <motion.li
+                      key={id}
+                      initial={{ opacity: 0, x: 12 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: 0.08 + i * 0.035, duration: 0.22 }}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => goToSection(id)}
+                        className={`w-full text-left py-3 px-2 text-base transition-colors border-b border-border/60 ${
+                          onHome && activeSection === id
+                            ? 'font-bold'
+                            : 'text-foreground/80 hover:text-foreground'
+                        }`}
+                      >
+                        {label}
+                      </button>
+                    </motion.li>
+                  ))}
+                </ul>
+                <div className="mt-auto text-xs text-muted-foreground">vtoivonen.com</div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+    </>
   )
 }

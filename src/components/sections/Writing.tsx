@@ -1,42 +1,40 @@
 import { motion } from 'framer-motion'
-import { Separator } from '@/components/ui/separator'
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import { Link } from 'react-router'
+import { SectionHeader } from '@/components/ui/section-header'
+import { listPosts } from '@/lib/content/posts'
+import { formatTopLevel, topLevelOf, topLevelTags } from '@/lib/tags'
 
-const categories = ['All', 'Lab Notes', 'Production Incidents', 'Safety Deep Dives']
+const HOMEPAGE_LIMIT = 6
 
-const posts = [
-  {
-    title: 'What oversight behaviors actually survive distillation?',
-    category: 'Lab Notes',
-    date: 'Coming Soon',
-    description: 'Empirical analysis of safety transfer in model compression',
-  },
-  {
-    title: 'MCPs + ChakIt: building tool-using agents without losing control',
-    category: 'Lab Notes',
-    date: 'Coming Soon',
-    description:
-      'Practical notes on Multi-Context Protocol agents with OpenAI’s new ChakIt toolkit: routing, guardrails, and latency on edge devices.',
-  },
-  {
-    title: "Multilingual alignment: failures I've measured in the wild",
-    category: 'Safety Deep Dives',
-    date: 'Coming Soon',
-    description: 'Cross-lingual safety evaluation results from production systems',
-  },
-  {
-    title: 'Designing evals that survive deployment context shifts',
-    category: 'Production Incidents',
-    date: 'Coming Soon',
-    description: 'Lessons from eval-production mismatches',
-  },
-]
+function formatDate(iso: string): string {
+  return new Date(iso).toLocaleDateString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+  })
+}
 
 export function Writing() {
-  const [selectedCategory, setSelectedCategory] = useState('All')
+  // `listPosts()` is module-load constant; memoise the slice the homepage shows.
+  const allPosts = useMemo(() => listPosts(), [])
+  const [selectedTop, setSelectedTop] = useState<string>('all')
 
-  const filteredPosts =
-    selectedCategory === 'All' ? posts : posts.filter((post) => post.category === selectedCategory)
+  // Only show top-level tags that at least one published post uses.
+  const usedTopTags = useMemo(() => {
+    const used = new Set<string>()
+    for (const p of allPosts) {
+      for (const t of p.tags) used.add(topLevelOf(t))
+    }
+    return topLevelTags.filter((t) => used.has(t))
+  }, [allPosts])
+
+  const filteredPosts = useMemo(() => {
+    if (selectedTop === 'all') return allPosts.slice(0, HOMEPAGE_LIMIT)
+    return allPosts
+      .filter((p) => p.tags.some((t) => topLevelOf(t) === selectedTop))
+      .slice(0, HOMEPAGE_LIMIT)
+  }, [allPosts, selectedTop])
 
   return (
     <section id="writing" className="min-h-screen px-6 py-24">
@@ -47,46 +45,99 @@ export function Writing() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <h2 className="text-2xl font-bold mb-8">WRITING</h2>
-          <Separator className="mb-8 bg-border" />
+          <SectionHeader number="05" title="WRITING" />
 
-          <div className="flex gap-4 mb-8">
-            {categories.map((category) => (
-              <button
-                key={category}
-                onClick={() => setSelectedCategory(category)}
-                className={`text-sm px-3 py-1 border transition-all ${
-                  selectedCategory === category
-                    ? 'border-2 border-foreground font-bold'
-                    : 'border-border hover:border-foreground'
-                }`}
-              >
-                {category}
-              </button>
+          <div className="flex flex-wrap gap-2 mb-8">
+            <FilterChip
+              label="All"
+              active={selectedTop === 'all'}
+              onClick={() => setSelectedTop('all')}
+            />
+            {usedTopTags.map((tag) => (
+              <FilterChip
+                key={tag}
+                label={formatTopLevel(tag)}
+                active={selectedTop === tag}
+                onClick={() => setSelectedTop(tag)}
+              />
             ))}
           </div>
 
           <div className="space-y-6">
+            {filteredPosts.length === 0 && (
+              <p className="text-sm text-muted-foreground">No posts under that tag yet.</p>
+            )}
             {filteredPosts.map((post, index) => (
               <motion.article
-                key={post.title}
+                key={post.slug}
                 initial={{ opacity: 0 }}
                 whileInView={{ opacity: 1 }}
-                transition={{ duration: 0.3, delay: index * 0.1 }}
+                transition={{ duration: 0.3, delay: index * 0.05 }}
                 viewport={{ once: true }}
                 className="border-b border-border pb-6"
               >
-                <div className="flex justify-between items-start mb-2">
-                  <h3 className="font-bold text-lg flex-1">{post.title}</h3>
-                  <span className="text-sm text-muted-foreground">{post.date}</span>
+                <div className="flex justify-between items-start mb-2 gap-4">
+                  <h3 className="font-serif font-medium text-xl flex-1 leading-snug">
+                    <Link to={post.permalink} className="hover:text-ink transition-colors">
+                      {post.title}
+                    </Link>
+                  </h3>
+                  <time
+                    dateTime={post.publishedAt}
+                    className="text-sm text-muted-foreground whitespace-nowrap"
+                  >
+                    {formatDate(post.publishedAt)}
+                  </time>
                 </div>
-                <p className="text-sm text-muted-foreground mb-2">{post.category}</p>
-                <p className="text-sm">{post.description}</p>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {Array.from(new Set(post.tags.map(topLevelOf))).map((t) => (
+                    <span
+                      key={t}
+                      className="text-xs text-muted-foreground border border-border rounded-sm px-1.5 py-0.5"
+                    >
+                      {formatTopLevel(t)}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-sm">{post.summary}</p>
               </motion.article>
             ))}
           </div>
+
+          {allPosts.length > HOMEPAGE_LIMIT && (
+            <div className="mt-8 text-sm">
+              <Link
+                to="/blog"
+                className="underline underline-offset-4 decoration-1 hover:text-ink hover:decoration-ink transition-colors"
+              >
+                All writing →
+              </Link>
+            </div>
+          )}
         </motion.div>
       </div>
     </section>
+  )
+}
+
+function FilterChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-sm px-3 py-1 border transition-all ${
+        active ? 'border-2 border-foreground font-bold' : 'border-border hover:border-foreground'
+      }`}
+    >
+      {label}
+    </button>
   )
 }

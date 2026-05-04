@@ -44,6 +44,7 @@ export default {
           DEFAULT: "rgb(var(--card) / <alpha-value>)",
           foreground: "rgb(var(--card-foreground) / <alpha-value>)",
         },
+        ink: "rgb(var(--ink) / <alpha-value>)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -63,6 +64,20 @@ export default {
           "100%": { opacity: "1" },
         },
       },
+      typography: () => ({
+        DEFAULT: {
+          css: {
+            "blockquote": {
+              borderLeftColor: "rgb(var(--ink))",
+              borderLeftWidth: "2px",
+              fontStyle: "italic",
+              fontWeight: "400",
+            },
+            "blockquote p:first-of-type::before": { content: "none" },
+            "blockquote p:last-of-type::after": { content: "none" },
+          },
+        },
+      }),
     },
   },
   plugins: [typography],

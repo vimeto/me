@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Separator } from '@/components/ui/separator'
+import { SectionHeader } from '@/components/ui/section-header'
 
 interface Project {
   year: string
@@ -12,12 +12,12 @@ interface Project {
 
 const projects: Project[] = [
   {
-    year: '2025',
+    year: '2025–2026',
     title: 'Vibemetrics → Bondata acquisition',
-    role: 'CTO → Head of AI',
+    role: 'CTO → Head of AI → Consulting AI Architect',
     description:
-      'Led the platform through acquisition (May 2025). Transitioned from CTO to Head of AI in July, shipping RAG-based survey agents and recommendations to production.',
-    impact: 'Acquisition closed; AI roadmap and production systems delivered',
+      'Led the platform through acquisition (May 2025). Moved from CTO to Head of AI, shipping RAG-based survey agents and recommendations to production. Transitioned to Consulting AI Architect in 2026 to focus on PhD research while staying engaged with the AI roadmap.',
+    impact: 'Acquisition closed; AI systems shipped; ongoing advisory role',
     link: 'https://www.bondata.fi',
   },
   {
@@ -30,20 +30,28 @@ const projects: Project[] = [
     link: 'https://padlo.co',
   },
   {
-    year: '2025',
-    title: 'Collaborative Edge/Cloud Fine-Tuning',
+    year: '2026',
+    title: 'BridgeLoRA: Skip-Layer Connectors at the Edge',
     role: 'Lead Researcher',
     description:
-      'Adapters that can skip transformer layers stay on-device while frozen LLM backbones run in the cloud. Privacy-preserving adaptation with latency/quality tradeoffs.',
-    impact: 'ICDCS 2025 submission with reference pipeline',
+      'Privacy-preserving collaborative fine-tuning: adapters target specific transformer layers and stay on-device while frozen backbones run in the cloud. Mechanistic interpretability drives layer selection — knowing which layers, which adapters, and which datasets to bind.',
+    impact: 'Accepted at ICDCS 2026; journal extension underway',
   },
   {
-    year: '2025',
-    title: 'Measuring On-Device Agents',
+    year: '2025–2026',
+    title: 'Measuring the True Cost of On-Device Agents',
     role: 'Lead Researcher',
     description:
-      'Systematic evaluation of LLM agents on consumer hardware (iPhone, MacBook, edge servers) across 300 tasks and multiple models.',
-    impact: 'PerCom 2026 submission with public measurements',
+      'Systematic evaluation of LLM agents on consumer hardware (iPhone, MacBook, edge servers) across 4 devices, 4 models, and 300 tasks.',
+    impact: 'MobiHoc 2026 submission with public measurements',
+  },
+  {
+    year: '2025–2026',
+    title: 'LLM Inference on the Edge — Survey',
+    role: 'First Author',
+    description:
+      '180-reference survey covering serving stacks, hardware, and emerging methods for running language models on-device and at the edge.',
+    impact: 'In review since April 2026',
   },
   {
     year: '2025',
@@ -54,12 +62,12 @@ const projects: Project[] = [
     impact: '1st place finish',
   },
   {
-    year: '2019',
+    year: '2019–',
     title: 'Teknet',
-    role: 'Founder',
+    role: 'Founder, sole operator → Co-owner with brother (2025–)',
     description:
-      'Founded a metal manufacturing company. Led project delivery and operations while studying, building hands-on discipline for applied problem solving.',
-    impact: 'Profitable services business',
+      'Continued the company from my grandfather’s legacy. Sole worker for the first ~5 years — sales, manufacturing, packaging, marketing, customer service. Expanded in early 2025 by taking my brother as co-owner.',
+    impact: 'Profitable services business across two generations',
   },
 ]
 
@@ -73,8 +81,7 @@ export function Projects() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <h2 className="text-2xl font-bold mb-8">PROJECTS</h2>
-          <Separator className="mb-8 bg-border" />
+          <SectionHeader number="02" title="PROJECTS" note="2019 – 2026" />
 
           <div className="space-y-8">
             {projects.map((project, index) => (

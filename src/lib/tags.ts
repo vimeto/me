@@ -89,3 +89,18 @@ export function isValidTag(tag: string): boolean {
 export function topLevelOf(tag: string): string {
   return tag.split('/', 1)[0]
 }
+
+/** Top-level tags in display order. */
+export const topLevelTags: readonly string[] = Object.keys(tagTree)
+
+/** Render `language-models` as `Language models`, `ml-systems` as `ML systems`. */
+export function formatTopLevel(tag: string): string {
+  return tag
+    .split('-')
+    .map((s, i) => {
+      if (s === 'ml') return 'ML'
+      if (i === 0) return s[0].toUpperCase() + s.slice(1)
+      return s
+    })
+    .join(' ')
+}

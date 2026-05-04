@@ -68,8 +68,10 @@ export function CommentForm({ slug, onSubmitted }: Props) {
         return
       }
       if (widgetIdRef.current) return
+      const sitekey = turnstileSitekey
+      if (!sitekey) return
       widgetIdRef.current = window.turnstile.render(widgetRef.current, {
-        sitekey: turnstileSitekey,
+        sitekey,
         theme: 'auto',
         callback: (token) => setTurnstileToken(token),
         'expired-callback': () => setTurnstileToken(''),

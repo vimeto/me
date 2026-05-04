@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion'
-import { Separator } from '@/components/ui/separator'
 import { Mail, Github, Linkedin, Twitter, GraduationCap } from 'lucide-react'
+import { SectionHeader } from '@/components/ui/section-header'
 
 const contacts = [
   {
@@ -51,8 +51,7 @@ export function Contact() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <h2 className="text-2xl font-bold mb-8">CONTACT</h2>
-          <Separator className="mb-8 bg-border" />
+          <SectionHeader number="06" title="CONTACT" />
 
           <div className="space-y-4">
             {contacts.map((contact, index) => {
@@ -72,7 +71,7 @@ export function Contact() {
                     href={contact.href}
                     target={contact.href.startsWith('mailto:') ? undefined : '_blank'}
                     rel={contact.href.startsWith('mailto:') ? undefined : 'noopener noreferrer'}
-                    className="underline underline-offset-4 hover:font-bold transition-all"
+                    className="underline underline-offset-4 decoration-1 hover:text-ink hover:decoration-ink transition-colors"
                   >
                     {contact.value}
                   </a>

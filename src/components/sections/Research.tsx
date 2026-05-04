@@ -1,29 +1,34 @@
 import { motion } from 'framer-motion'
 import { Separator } from '@/components/ui/separator'
+import { SectionHeader } from '@/components/ui/section-header'
+import { ArchitectureDiagram } from '@/components/sections/ArchitectureDiagram'
 
 const researchAreas = [
   {
-    title: 'Cognitive Core',
+    title: 'BridgeLoRA — Journal Extension',
     question:
-      'How do we build compact models that reason well and use tools instead of memorizing facts?',
+      'Which transformer layers benefit most from per-task adapters, and where can frozen backbones still serve?',
     method:
-      'Train/evaluate small models with retrieval + tool-use scaffolds; stress-test reasoning vs. recall',
-    output: 'Blueprint for tool-using “cognitive core” models deployable on devices',
+      'Extending the ICDCS 2026 result with mechanistic interpretability — which layers, which adapters, which datasets — so adapter placement is principled, not heuristic',
+    output:
+      'Journal paper with concrete parameter-efficiency recipes; reference pipelines for layer-targeted adaptation',
   },
   {
-    title: 'Edge/Cloud Collaboration',
+    title: 'Predictive MoE Routing',
     question:
-      'What’s the right split between on-device adapters and server backbones for privacy + speed?',
+      'Can a lightweight predictor running alongside a Mixture-of-Experts model speed up its inference on edge devices?',
     method:
-      'Adapters that can skip transformer layers on-device while frozen backbones run in the cloud',
-    output: 'Latency/quality tradeoff studies and open-source reference pipelines',
+      'Anticipate which experts the model will dispatch to, prefetch the relevant weights, and pre-stage the routing path so memory bandwidth on consumer hardware stops being the bottleneck',
+    output: 'Latency improvements that make MoE feasible for on-device deployment',
   },
   {
-    title: 'RL for Agents on Devices',
+    title: 'Hierarchical Memory Bank',
     question:
-      'How can we run RL (GRPO-style) efficiently with on-device rollouts and verifiable rewards?',
-    method: 'Asynchronous rollout collection on edge hardware, off-policy updates in the cloud',
-    output: 'Benchmarks + recipes for on-device agent training',
+      'Can a small language model gain reliable, composable memory by injecting trainable deltas into its residual stream?',
+    method:
+      'Different fact types target different transformer layers; memories compose additively, so banks can stack on top of one another; tested on hierarchically organized data',
+    output:
+      'A modular memory architecture that scales by addition rather than retraining the base model',
   },
 ]
 
@@ -37,14 +42,10 @@ export function Research() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <div className="flex justify-between items-baseline mb-8">
-            <h2 className="text-2xl font-bold">RESEARCH</h2>
-            <span className="text-sm text-muted-foreground">2024-2025</span>
-          </div>
-          <Separator className="mb-8 bg-border" />
+          <SectionHeader number="01" title="RESEARCH" note="2024 – 2026" />
 
           <div className="mb-12">
-            <p className="text-lg leading-relaxed">
+            <p className="font-serif text-lg leading-relaxed">
               I focus on distributed LLM inference and small, tool-using models that can live on
               devices. The goal: a “cognitive core” that reasons well, uses tools, and keeps most
               knowledge offloaded to retrieval instead of parameters. I got into ML
@@ -52,20 +53,27 @@ export function Research() {
               work empirically: publishing benchmarks, code, and measurements on real consumer
               hardware (iPhone, MacBook, edge servers).
             </p>
+
+            <ArchitectureDiagram />
+
             <div className="mt-6 p-4 border border-border">
-              <h4 className="font-bold text-sm mb-2">Papers in Review</h4>
+              <h4 className="font-bold text-sm mb-2">Recent Papers</h4>
               <ul className="text-sm space-y-1">
                 <li>
-                  • LLM Inference on Edge — Survey (first author, 180 references, submitted Nov
-                  2025)
+                  • BridgeLoRA: Privacy-preserving Collaborative Skip-Layer Connectors for Efficient
+                  Transformer Fine-tuning at the Edge — accepted at ICDCS 2026
                 </li>
                 <li>
-                  • Measuring the True Cost of On-Device Agents (4 devices, 4 models, 300 tasks —
-                  PerCom 2026 submission)
+                  • Measuring the True Cost of On-Device Agents (4 devices, 4 models, 300 tasks) —
+                  MobiHoc 2026 submission
                 </li>
                 <li>
-                  • Collaborative Fine-Tuning: Edge Adapters + Cloud Backbones (ICDCS Dec 2025
-                  submission)
+                  • Scaffold-and-Release: When Can We Remove the Teacher from RLVR Training? — COLM
+                  2026 submission
+                </li>
+                <li>
+                  • LLM Inference on Edge — Survey (first author, 180 references, in review since
+                  April 2026)
                 </li>
               </ul>
             </div>
@@ -119,7 +127,7 @@ export function Research() {
               href="https://scholar.google.com/citations?user=QnHmHssAAAAJ"
               target="_blank"
               rel="noopener noreferrer"
-              className="underline underline-offset-4 hover:font-bold transition-all"
+              className="underline underline-offset-4 decoration-1 hover:text-ink hover:decoration-ink transition-colors"
             >
               View Google Scholar Profile →
             </a>

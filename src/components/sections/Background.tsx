@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Separator } from '@/components/ui/separator'
+import { SectionHeader } from '@/components/ui/section-header'
 
 const education = [
   {
@@ -28,14 +29,14 @@ const education = [
 const sports = [
   {
     sport: 'Cross-country Skiing',
-    level: 'Competitive',
+    level: 'Competitive (regional)',
     club: 'Pirkkalan Hiihtäjät',
     achievements: 'Multiple regional podium finishes',
   },
   {
     sport: 'Orienteering',
     level: 'Club',
-    club: 'Local events',
+    club: 'Kangasala SK',
     achievements: 'Active participant in national competitions',
   },
 ]
@@ -50,8 +51,7 @@ export function Background() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <h2 className="text-2xl font-bold mb-8">BACKGROUND</h2>
-          <Separator className="mb-8 bg-border" />
+          <SectionHeader number="03" title="BACKGROUND" note="2018 – present" />
 
           <div className="mb-12">
             <h3 className="text-sm font-bold uppercase tracking-wider mb-6">Education</h3>
@@ -94,9 +94,18 @@ export function Background() {
                 parts interact under real constraints.
               </p>
               <p className="border border-border p-4">
-                Ran a small construction company for three summers with one employee — renovations,
-                painting, and small builds; learned end-to-end delivery and hands-on project
-                management.
+                Ran a small construction company for three summers with a coworker / shareholder —
+                renovations, painting, and small builds; learned end-to-end delivery and hands-on
+                project management of a two-person business.
+              </p>
+              <p className="border border-border p-4">
+                With the same coworker, sold two products on Amazon US — a deliberate exercise in
+                learning sales, marketing, branding, and end-to-end product building from another
+                angle.
+              </p>
+              <p className="border border-border p-4">
+                Built an outdoor sauna from scratch — frame, walls, stove, the lot. Same lesson the
+                go-kart taught about real-world constraints, at a different scale.
               </p>
             </div>
           </div>
@@ -129,6 +138,11 @@ export function Background() {
                 </motion.div>
               ))}
             </div>
+            <p className="mt-6 text-sm text-muted-foreground">
+              Not the highest national or international level — but the working habits competitive
+              sports demand (tight schedules, knowing limits, pushing through under pressure)
+              translate directly to research and to high-velocity teams.
+            </p>
           </div>
         </motion.div>
       </div>

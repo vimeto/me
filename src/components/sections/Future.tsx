@@ -1,5 +1,6 @@
 import { motion } from 'framer-motion'
 import { Separator } from '@/components/ui/separator'
+import { SectionHeader } from '@/components/ui/section-header'
 
 export function Future() {
   return (
@@ -11,13 +12,13 @@ export function Future() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <h2 className="text-2xl font-bold mb-8">FUTURE</h2>
-          <Separator className="mb-8 bg-border" />
+          <SectionHeader number="04" title="FUTURE" note="2026 – 2027" />
 
           <div className="border border-border p-8 mb-8">
-            <h3 className="font-bold text-lg mb-4">2026 Industry Internship</h3>
+            <h3 className="font-bold text-lg mb-4">Final research push</h3>
             <p className="text-sm text-muted-foreground mb-4">
-              Target: Foundation models team working on edge/cloud intelligence (e.g., Apple Zurich)
+              Three threads to close the PhD: a journal extension of BridgeLoRA, an edge-mesh
+              version of on-policy distillation, and a systems paper unifying the work.
             </p>
 
             <div className="space-y-4 text-sm">
@@ -25,13 +26,17 @@ export function Future() {
                 <h4 className="font-bold mb-2">Goals</h4>
                 <ul className="space-y-2">
                   <li>
-                    • Ship a “cognitive core” prototype: small model, strong tool-use, minimal
-                    memorization
+                    • BridgeLoRA → journal extension: which layers, which adapters, which datasets —
+                    mechanistic interpretability driving parameter efficiency
                   </li>
                   <li>
-                    • Validate collaborative GRPO-style RL with on-device rollouts + cloud updates
+                    • Edge-mesh on-policy distillation: students and teachers split across devices,
+                    clusters, and even model families
                   </li>
-                  <li>• Deliver code + evals that teams can extend to production</li>
+                  <li>
+                    • Systems paper unifying BridgeLoRA, the measurement work, and the
+                    scaffold-and-release framing (COLM submission) — PhD thesis spine
+                  </li>
                 </ul>
               </div>
 
@@ -39,11 +44,14 @@ export function Future() {
                 <h4 className="font-bold mb-2">Timeline</h4>
                 <ul className="space-y-2">
                   <li>
-                    • Dec 2025: ICDCS submission for collaborative fine-tuning (edge adapters +
-                    cloud backbones)
+                    • 2026: BridgeLoRA accepted at ICDCS; measurement paper submitted to MobiHoc;
+                    on-policy distillation finding in writing
                   </li>
-                  <li>• Early 2026: GRPO-style RL manuscript; internship start</li>
-                  <li>• Early 2027: PhD defense</li>
+                  <li>
+                    • Late 2026 – early 2027: edge-mesh distillation manuscript, BridgeLoRA journal
+                    extension, systems paper draft
+                  </li>
+                  <li>• Early 2027: PhD defense and graduation</li>
                 </ul>
               </div>
             </div>
@@ -52,11 +60,16 @@ export function Future() {
           <div>
             <h3 className="text-sm font-bold uppercase tracking-wider mb-4">Long-term Vision</h3>
             <Separator className="mb-4 bg-border" />
-            <p className="text-sm leading-relaxed">
-              Build a deployable “cognitive core” that uses tools and retrieval to stay small,
-              private, and responsive on billions of devices. Publish the empirical
-              recipes—benchmarks, rollout tooling, and edge/cloud split patterns—that make that
-              possible.
+            <p className="font-serif text-base md:text-lg leading-relaxed">
+              I’m not aiming to spend the next decade on fundamental research alone. The role I want
+              combines the work I’ve already shipped — agentic systems, evaluations, production code
+              — with the cognitive-core research I’m doing now, in a small high-agency team where
+              the system actually reaches users. That research only matters if it’s built ground up:
+              designed, distilled, trained from scratch, and deployed at scale, which takes real
+              compute and a real team. Three years ago I set a ten-year goal of becoming one of the
+              top hundred AI researchers in the world; seven years remain. I don’t know if I’ll get
+              there, but I want to spend those years in a role where both my wins and my failures
+              show up in something millions of people use every day.
             </p>
           </div>
         </motion.div>

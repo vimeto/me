@@ -104,7 +104,9 @@ export default function SearchPage() {
   return (
     <section className="min-h-screen px-6 py-24">
       <div className="max-w-3xl mx-auto">
-        <h1 className="text-2xl font-bold mb-8">SEARCH</h1>
+        <h1 className="font-serif font-normal text-4xl md:text-5xl tracking-wide leading-[1.05] mb-8">
+          SEARCH
+        </h1>
         <label className="block">
           <span className="sr-only">Search posts</span>
           <input
@@ -135,8 +137,8 @@ export default function SearchPage() {
                 <ul className="space-y-6">
                   {results.map((r) => (
                     <li key={r.id} className="border-b border-border pb-4">
-                      <h2 className="font-bold text-lg">
-                        <a href={r.url} className="hover:underline underline-offset-4">
+                      <h2 className="font-serif font-medium text-xl leading-snug">
+                        <a href={r.url} className="hover:text-ink transition-colors">
                           {r.title}
                         </a>
                       </h2>
