@@ -1,4 +1,4 @@
-// LLM-based comment moderation via Anthropic's Claude Haiku.
+// LLM-based comment moderation via OpenAI's gpt-5.4-nano.
 //
 // The pipeline asks the model to classify a comment as one of three buckets:
 //   approve — benign / on-topic
@@ -6,8 +6,7 @@
 //   review  — ambiguous, push to human queue
 //
 // Design choices:
-//   - Tiny prompt, temperature 0 for reproducibility.
-//   - Classification is returned as a single JSON object, not free text.
+//   - Tiny prompt, structured JSON output (response_format=json_object).
 //   - Network or parse failures fall back to `review` so that bad upstream
 //     state never auto-approves a comment.
 
@@ -23,8 +22,8 @@ export interface ModerationClient {
   check(input: ModerationInput): Promise<{ verdict: ModerationVerdict; reason: string }>
 }
 
-const API_URL = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-haiku-4-5-20251001'
+const API_URL = 'https://api.openai.com/v1/chat/completions'
+const MODEL = 'gpt-5.4-nano'
 
 const SYSTEM_PROMPT = `You are a comment moderator for a personal technical blog about AI and math.
 Classify each comment as one of: approve, reject, review.
@@ -45,15 +44,16 @@ export function makeModeration(apiKey: string | undefined): ModerationClient | n
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            'x-api-key': apiKey,
-            'anthropic-version': '2023-06-01',
+            authorization: `Bearer ${apiKey}`,
           },
           body: JSON.stringify({
             model: MODEL,
-            max_tokens: 256,
-            temperature: 0,
-            system: SYSTEM_PROMPT,
-            messages: [{ role: 'user', content: user }],
+            max_completion_tokens: 256,
+            response_format: { type: 'json_object' },
+            messages: [
+              { role: 'system', content: SYSTEM_PROMPT },
+              { role: 'user', content: user },
+            ],
           }),
         })
         if (!res.ok) {
@@ -61,9 +61,9 @@ export function makeModeration(apiKey: string | undefined): ModerationClient | n
           return { verdict: 'review', reason: `api ${res.status}` }
         }
         const data = (await res.json()) as {
-          content?: Array<{ type: string; text?: string }>
+          choices?: Array<{ message?: { content?: string } }>
         }
-        const text = data.content?.find((c) => c.type === 'text')?.text ?? ''
+        const text = data.choices?.[0]?.message?.content ?? ''
         const parsed = parseVerdict(text)
         return parsed ?? { verdict: 'review', reason: 'unparseable moderator response' }
       } catch (err) {

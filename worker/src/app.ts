@@ -42,7 +42,7 @@ export function createApp(overrides: AppDeps = {}) {
       moderation:
         overrides.moderation !== undefined
           ? overrides.moderation
-          : makeModeration(c.env.HAIKU_API_KEY),
+          : makeModeration(c.env.OPENAI_API_KEY),
       turnstile:
         overrides.turnstile !== undefined
           ? overrides.turnstile

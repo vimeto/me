@@ -12,7 +12,7 @@ database_id = "8533456f-2ed4-4226-9254-a3ce575b05dc"
 migrations_dir = "migrations"
 
 [vars]
-# Non-secret config. Secrets (HAIKU_API_KEY, TURNSTILE_SECRET, etc.) go into
+# Non-secret config. Secrets (OPENAI_API_KEY, TURNSTILE_SECRET, etc.) go into
 # the dashboard / `wrangler secret put` and are read off `env` at runtime.
 SITE_ORIGIN = "https://vtoivonen.com"
 ADMIN_ORIGIN = "https://vtoivonen.com"

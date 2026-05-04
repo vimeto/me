@@ -103,7 +103,7 @@ commentsRouter.post('/', async (c) => {
     return c.json({ error: 'rate limit' }, 429)
   }
 
-  // Moderation. When no client is configured (no HAIKU_API_KEY) we default
+  // Moderation. When no client is configured (no OPENAI_API_KEY) we default
   // to pending so a human sees every comment before it goes live.
   let status: CommentRow['status'] = 'pending'
   let reason: string | null = null

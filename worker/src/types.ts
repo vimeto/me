@@ -13,7 +13,7 @@ export type Env = {
   ACCESS_DEV_BYPASS?: string
   // Comment submission pipeline (Phase 6).
   TURNSTILE_SECRET?: string
-  HAIKU_API_KEY?: string
+  OPENAI_API_KEY?: string
   IP_HASH_SALT?: string
 }
 

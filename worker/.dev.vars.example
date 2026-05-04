@@ -3,8 +3,8 @@
 # Populate real values from the Cloudflare dashboard or from
 # `wrangler secret put <NAME> --config worker/wrangler.toml` for deploys.
 
-# Anthropic API key used by the comment moderation pipeline (Phase 6).
-HAIKU_API_KEY=
+# OpenAI API key used by the comment moderation pipeline (gpt-5.4-nano).
+OPENAI_API_KEY=
 
 # Cloudflare Turnstile secret (Phase 6).
 TURNSTILE_SECRET=

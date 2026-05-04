@@ -36,7 +36,7 @@ The worker is currently deployed without these. It tolerates their absence and r
 
 ```bash
 set -a; source ./.env.local; set +a
-pnpm exec wrangler secret put HAIKU_API_KEY    --config worker/wrangler.toml   # Anthropic API key for moderation
+pnpm exec wrangler secret put OPENAI_API_KEY   --config worker/wrangler.toml   # OpenAI API key (gpt-5.4-nano moderation)
 pnpm exec wrangler secret put TURNSTILE_SECRET --config worker/wrangler.toml   # Cloudflare Turnstile server secret
 ```
 
@@ -86,5 +86,5 @@ pnpm exec wrangler d1 migrations apply personal-page --config worker/wrangler.to
 
 # Secrets
 pnpm exec wrangler secret list --config worker/wrangler.toml
-pnpm exec wrangler secret put HAIKU_API_KEY --config worker/wrangler.toml
+pnpm exec wrangler secret put OPENAI_API_KEY --config worker/wrangler.toml
 ```
