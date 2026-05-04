@@ -1,5 +1,25 @@
-import { useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { submitComment } from '@/lib/comments'
+
+// Cloudflare Turnstile API surface (loaded by Comments wrapper).
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (
+        el: HTMLElement | string,
+        opts: {
+          sitekey: string
+          callback?: (token: string) => void
+          'expired-callback'?: () => void
+          'error-callback'?: () => void
+          theme?: 'light' | 'dark' | 'auto'
+        }
+      ) => string
+      reset: (widgetId?: string) => void
+      getResponse: (widgetId?: string) => string | undefined
+    }
+  }
+}
 
 type Props = {
   slug: string
@@ -29,6 +49,39 @@ export function CommentForm({ slug, onSubmitted }: Props) {
   const honeypotId = useId()
   const turnstileSitekey = getTurnstileSitekey()
   const [state, setState] = useState<FormState>({ status: 'idle' })
+  const [turnstileToken, setTurnstileToken] = useState('')
+  const widgetRef = useRef<HTMLDivElement>(null)
+  const widgetIdRef = useRef<string | null>(null)
+
+  // Render the Turnstile widget explicitly once the api.js script is ready.
+  // Implicit rendering via <div class="cf-turnstile"> + auto-injected hidden
+  // input is fragile under React, so we drive the lifecycle ourselves and
+  // capture the token via the success callback.
+  useEffect(() => {
+    if (!turnstileSitekey) return
+    let cancelled = false
+
+    function renderWidget() {
+      if (cancelled) return
+      if (!window.turnstile || !widgetRef.current) {
+        setTimeout(renderWidget, 100)
+        return
+      }
+      if (widgetIdRef.current) return
+      widgetIdRef.current = window.turnstile.render(widgetRef.current, {
+        sitekey: turnstileSitekey,
+        theme: 'auto',
+        callback: (token) => setTurnstileToken(token),
+        'expired-callback': () => setTurnstileToken(''),
+        'error-callback': () => setTurnstileToken(''),
+      })
+    }
+
+    renderWidget()
+    return () => {
+      cancelled = true
+    }
+  }, [turnstileSitekey])
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -37,7 +90,6 @@ export function CommentForm({ slug, onSubmitted }: Props) {
     const email = String(form.get('email') ?? '').trim()
     const body = String(form.get('body') ?? '').trim()
     const honeypot = String(form.get('url') ?? '') // hidden field labelled 'url'
-    const turnstileToken = String(form.get('cf-turnstile-response') ?? '')
 
     if (!author || !body) {
       setState({ status: 'error', message: 'Name and comment are required.' })
@@ -45,6 +97,13 @@ export function CommentForm({ slug, onSubmitted }: Props) {
     }
     if (body.length > 4000) {
       setState({ status: 'error', message: 'Comment is too long (4000 chars max).' })
+      return
+    }
+    if (turnstileSitekey && !turnstileToken) {
+      setState({
+        status: 'error',
+        message: 'Please complete the bot check above before submitting.',
+      })
       return
     }
 
@@ -60,6 +119,11 @@ export function CommentForm({ slug, onSubmitted }: Props) {
       })
       if ('error' in res) {
         setState({ status: 'error', message: res.error })
+        // Token was consumed even on rejection — re-arm the widget.
+        if (widgetIdRef.current && window.turnstile) {
+          window.turnstile.reset(widgetIdRef.current)
+          setTurnstileToken('')
+        }
         return
       }
       const message =
@@ -141,9 +205,7 @@ export function CommentForm({ slug, onSubmitted }: Props) {
         <input id={honeypotId} name="url" type="text" tabIndex={-1} autoComplete="off" />
       </div>
 
-      {turnstileSitekey && (
-        <div className="cf-turnstile" data-sitekey={turnstileSitekey} data-theme="auto" />
-      )}
+      {turnstileSitekey && <div ref={widgetRef} />}
 
       <div className="flex items-center gap-4">
         <button

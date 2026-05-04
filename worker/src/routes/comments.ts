@@ -79,11 +79,15 @@ commentsRouter.post('/', async (c) => {
     return c.json({ status: 'pending' })
   }
 
-  // Turnstile (only enforced when a secret is configured).
+  // Turnstile. We don't hard-block on failure (ad-blockers, browser quirks
+  // like Trusted-Types CSP inside the challenge iframe, transient widget
+  // 600010s) — instead, a missing or invalid token forces the comment into
+  // the human moderation queue. Honest spam still has to clear the LLM
+  // moderator and the per-IP rate limit below.
+  let turnstilePassed = true
   if (deps.turnstile) {
     const ip = c.req.header('CF-Connecting-IP') ?? undefined
-    const ok = await deps.turnstile.verify(input.turnstileToken ?? '', ip)
-    if (!ok) return c.json({ error: 'bot check failed' }, 403)
+    turnstilePassed = await deps.turnstile.verify(input.turnstileToken ?? '', ip)
   }
 
   const ip = c.req.header('CF-Connecting-IP') ?? '0.0.0.0'
@@ -104,21 +108,25 @@ commentsRouter.post('/', async (c) => {
   }
 
   // Moderation. When no client is configured (no OPENAI_API_KEY) we default
-  // to pending so a human sees every comment before it goes live.
+  // to pending so a human sees every comment before it goes live. A failed
+  // Turnstile also forces pending — the LLM may still vote `reject` on
+  // outright spam, but auto-approval requires both signals to clear.
   let status: CommentRow['status'] = 'pending'
-  let reason: string | null = null
+  let reason: string | null = turnstilePassed ? null : 'turnstile failed; routing to manual review'
   if (deps.moderation) {
     const verdict = await deps.moderation.check({
       slug: input.slug,
       author: input.author,
       body: input.body,
     })
-    if (verdict.verdict === 'approve') {
+    if (verdict.verdict === 'approve' && turnstilePassed) {
       status = 'approved'
       reason = `auto-approved: ${verdict.reason}`.slice(0, 500)
     } else if (verdict.verdict === 'reject') {
       status = 'rejected'
       reason = `auto-rejected: ${verdict.reason}`.slice(0, 500)
+    } else if (verdict.verdict === 'approve' && !turnstilePassed) {
+      reason = `pending (turnstile failed; LLM said approve): ${verdict.reason}`.slice(0, 500)
     } else {
       reason = `queued for review: ${verdict.reason}`.slice(0, 500)
     }

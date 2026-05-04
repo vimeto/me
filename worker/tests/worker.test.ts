@@ -438,7 +438,7 @@ test('POST honeypot silently drops and never writes to DB', async () => {
   assertEq(db._submissions().length, 0, 'no submission log')
 })
 
-test('POST returns 403 when Turnstile rejects the token', async () => {
+test('POST forces pending (no auto-approve) when Turnstile fails', async () => {
   const db = createStubD1()
   const testApp = createApp({
     moderation: stubModeration('approve'),
@@ -449,8 +449,12 @@ test('POST returns 403 when Turnstile rejects the token', async () => {
     postComment({ slug: 'two-tails', author: 'Ada', body: 'hi', turnstileToken: 'bad' }),
     mkEnv(db)
   )
-  assertEq(res.status, 403, 'turnstile reject')
-  assertEq(db._all().length, 0, 'no row written on turnstile fail')
+  assertEq(res.status, 200, 'turnstile fail still accepts (will be moderated)')
+  const body = (await res.json()) as { status: string }
+  assertEq(body.status, 'pending', 'turnstile fail forces pending status')
+  const rows = db._all()
+  assertEq(rows.length, 1, 'row written even on turnstile fail')
+  assertEq(rows[0].status, 'pending', 'row stored as pending')
 })
 
 test('POST 429s once rate limit threshold is reached', async () => {
