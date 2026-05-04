@@ -1,0 +1,210 @@
+---
+title: Quantization is a hardware story (and an entropy puzzle)
+slug: quantization-hardware-pareto-entropy
+publishedAt: 2026-04-17
+summary: "I came in thinking quantization was about saving disk space. The bigger story is bandwidth, on both ends of the hardware spectrum, and underneath that there's a small information-theoretic puzzle I didn't expect."
+tags:
+  - language-models/inference/quantization
+  - ml-systems/hardware
+  - math/information-theory
+status: published
+---
+
+# Quantization is a hardware story (and an entropy puzzle)
+
+I came in thinking quantization was about saving disk space. It's actually about feeding the bus, on both ends of the hardware spectrum. And underneath the bus story there's an information-theoretic puzzle that took me longer than I'd like to admit to make peace with.
+
+The post walks the hardware framing first, then the size-vs-quality Pareto, then the entropy puzzle that explains why we get away with 4 bits at all.
+
+## Hardware on both ends
+
+Edge and server look different on a spec sheet and identical on a roofline. Both are memory-bound on dense decode, and both fix the bit width before they fix anything else.
+
+- Snapdragon X Elite — 135 GB/s LPDDR5x.
+- Jetson AGX Orin (64 GB) — 204.8 GB/s LPDDR5.
+- Apple M4 Max (40-core GPU bin) — 546 GB/s unified memory.
+- Apple M3 Ultra — 819 GB/s.
+- NVIDIA H100 SXM — 3.35 TB/s HBM3.
+- NVIDIA H200 — 4.8 TB/s HBM3e.
+
+Three orders of magnitude between the slowest and fastest entries, and yet the same arithmetic decides what runs. A 70B model at FP16 reads 140 GB per token. The Snapdragon caps you at one token per second before any compute has happened; the H200 caps you at thirty-something. Drop to int4 and bytes shrink 4×, ceiling rises 4×. Nothing about the math knows which side of the bus you're on.
+
+<ParamPlot
+  compute="quantHw.bandwidthGap"
+  title="Memory-bound tokens/sec across devices"
+  caption="Three series per device: FP16 ceiling, INT4 ceiling, and your chosen bit width. Sliding context length adds KV-cache bytes to the per-token read; on long contexts the cache eats into the gap that quantization opens."
+  kind="line"
+  xLabel="device (left → right: edge → server)"
+  yLabel="tokens / sec (memory-bound)"
+  params={{ paramsB: 70, bits: 4, ctxK: 8 }}
+  controls={[
+    { kind: 'slider', param: 'paramsB', label: 'Model size (B params)', min: 1, max: 200, step: 1, format: 'int', hint: '7, 13, 70, 180 are common points' },
+    { kind: 'slider', param: 'bits', label: 'Bits per weight', min: 2, max: 16, step: 1, format: 'int' },
+    { kind: 'slider', param: 'ctxK', label: 'Context length (K tokens)', min: 0, max: 128, step: 1, format: 'int', hint: 'KV cache grows linearly; at 128K it rivals weight bytes' },
+  ]}
+  height={300}
+/>
+
+The KV-cache series is why a server-side picture can't stop at "weights are 4× smaller now". On long contexts the cache reads dominate. A 70B model at int4 with 128K of context reads roughly as many bytes for the cache as for the weights, every step. The KV-quantization line of work (KIVI, KVQuant) is the same bandwidth move applied to a different tensor.
+
+## The size + bandwidth argument
+
+The memory math is short. Bytes per token is $P \cdot b / 8$, time over a bus of bandwidth $B$ is $P b / (8 B)$, and that is — to a better approximation than I expected — the latency. Arithmetic isn't the bottleneck. Quantization isn't making matmul faster. It's shrinking the operands so the bus can keep up.
+
+## Technique tour, compressed
+
+RTN → [GPTQ](https://arxiv.org/abs/2210.17323) (2022) → [SmoothQuant](https://arxiv.org/abs/2211.10438) (2022) → [AWQ](https://arxiv.org/abs/2306.00978) (2023) → 2024+ ([QuIP#](https://arxiv.org/abs/2402.04396), [AQLM](https://arxiv.org/abs/2401.06118), HQQ, SpinQuant). One paragraph and one plot per paper. Each one fixes a specific failure mode of the previous; together they're the conceptual backbone the field shipped.
+
+**Round-to-nearest** is the baseline. Pick a symmetric range $[-R, R]$, divide it into $2^b$ levels, snap each weight to the nearest one. The error is a sawtooth of period $s = R/(2^{b-1}-1)$ inside the range, linear in $|w|$ outside. Per-channel scales (one $R$ per output channel) are the cheapest fix and almost always the right starting move.
+
+<ParamPlot
+  compute="quant.rtnError"
+  title="RTN error envelope"
+  caption="Sawtooth bounded by ±s/2 inside [-R, R]. Outside the range, error grows linearly. Per-channel scales bound the damage."
+  kind="line"
+  xLabel="weight"
+  yLabel="q(w) − w"
+  params={{ bits: 4, wMax: 1, clipFrac: 1 }}
+  controls={[
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 8, step: 1, format: 'int' },
+    { kind: 'slider', param: 'wMax', label: 'Weight magnitude', min: 0.5, max: 3, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'clipFrac', label: 'Clip R / wMax', min: 0.2, max: 1, step: 0.05, format: 'percent' },
+  ]}
+/>
+
+**GPTQ** takes the coupling between weights seriously. Quantize left to right; when you snap $w_i$ to the grid you incur a residual, and instead of throwing it away you push it onto the unquantized weights in proportions given by the inverse Hessian column. The cumulative output error telescopes instead of random-walking. Headline result at the time: 3–4 bit OPT-175B and BLOOM-176B with small perplexity hits.
+
+<ParamPlot
+  compute="quant.gptqFeedback"
+  title="Cumulative output error: RTN vs. GPTQ"
+  caption="RTN's residuals random-walk (√n growth); GPTQ's feedback telescopes them, so the line stays bounded by one grid step. ρ is the AR(1) feedback strength."
+  kind="line"
+  xLabel="weights quantized"
+  yLabel="|Σ residuals|"
+  params={{ bits: 3, rho: 0.7, n: 120, trials: 64 }}
+  controls={[
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 6, step: 1, format: 'int' },
+    { kind: 'slider', param: 'rho', label: 'Feedback ρ', min: 0, max: 1, step: 0.05, format: 'decimal' },
+  ]}
+/>
+
+**SmoothQuant** patches what RTN does to *activations*. A few residual-stream channels carry magnitudes 10–100× the rest; per-tensor scales waste their grid on those spikes. Migrate the magnitude across the matmul: $X W = (X / \mathrm{diag}(m)) (\mathrm{diag}(m) W)$. Same product, different dynamic ranges. Picking $m$ is a one-parameter search.
+
+<ParamPlot
+  compute="quant.smoothquantRescale"
+  title="Effective dynamic range vs. α"
+  caption="As α increases, activation range falls and weight range rises. The crossover is the zone where neither side wastes grid levels on the other's outliers."
+  kind="line"
+  xLabel="α (migration strength)"
+  yLabel="max / median"
+  params={{ alpha: 0.5, spike: 30, nSpikes: 3 }}
+  controls={[
+    { kind: 'slider', param: 'alpha', label: 'α', min: 0, max: 1, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'spike', label: 'Outlier × median', min: 3, max: 100, step: 1, format: 'int' },
+  ]}
+/>
+
+**AWQ** asks which channels actually matter and finds the answer is "very few". Salience tracks activation magnitude, not weight magnitude; the top ~1% of channels carry a disproportionate share of the output. The contribution is the trick for protecting them without dropping into mixed-precision matmul: a per-channel scale search that gives the salient channels a finer rounding step. Clean kernels, no precision boundaries inside the GEMM.
+
+<ParamPlot
+  compute="quant.awqSalience"
+  title="Cumulative salience captured vs. protected fraction"
+  caption="Pareto-ish CDF. Protect the top 1% and you catch ~40% of total salience; the curve does most of the work."
+  kind="area"
+  xLabel="protected channels (%)"
+  yLabel="cumulative salience"
+  params={{ beta: 1.1, alpha: 1 }}
+  controls={[
+    { kind: 'slider', param: 'alpha', label: 'Protect top α%', min: 0.1, max: 20, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'beta', label: 'Pareto β', min: 0.4, max: 2.5, step: 0.05, format: 'decimal' },
+  ]}
+/>
+
+The four moves are the same idea in different coordinates: pick grid points, push error somewhere it matters less, rescale the axis to fit the data, protect the few channels where a flip is catastrophic.
+
+## The Pareto curve
+
+The headline picture is quality vs. bits per weight. Two curves: naive RTN and the best-known stack. The shape is what matters.
+
+<ParamPlot
+  compute="quantHw.paretoQuality"
+  title="Quality vs. bits per weight"
+  caption="Toy ppl(b) = ppl_fp16 · (1 + α · 2^(-βb)). Naive RTN elbows around 6 bits; the best-known stack pushes the elbow to ~4. The shaded region below the stack elbow is where the 2024+ techniques are fighting."
+  kind="line"
+  xLabel="bits per weight"
+  yLabel="perplexity"
+  params={{ alpha: 6, beta: 1.1, stackOffset: 1.6, pplFp16: 5.6 }}
+  controls={[
+    { kind: 'slider', param: 'alpha', label: 'α (difficulty)', min: 1, max: 12, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'beta', label: 'β (bit elasticity)', min: 0.5, max: 3, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'stackOffset', label: 'Technique-stack offset (bits)', min: 0, max: 3, step: 0.1, format: 'decimal', hint: 'How far the GPTQ+SmoothQuant+AWQ stack shifts the curve left' },
+    { kind: 'slider', param: 'pplFp16', label: 'fp16 ppl', min: 2, max: 20, step: 0.1, format: 'decimal' },
+  ]}
+  height={300}
+/>
+
+Two beliefs to walk away with:
+
+- Between 4 and 8 bits the curve is almost flat. That's why nobody ships 6-bit kernels. There's nothing meaningful to win there.
+- Below 4 bits it falls off a cliff. That's where the 2024+ wave (vector quantization, lattice codes, learned codebooks) is actually fighting.
+
+Most of the post-2022 literature is mining a small region of this frontier. The framing doesn't change much; the techniques get fancier; the elbow inches left.
+
+## The entropy puzzle
+
+I think the entropy story is the prettiest thing here.
+
+A trained language model's weights look almost-random to gzip. The marginal distribution is close to a zero-mean Gaussian with mild heavy tails — close to maximum entropy for its variance, which is roughly what you'd expect from a network trained near a flat region of the loss landscape. General-purpose compressors look at a packed FP32 weight tensor and shrug: the ratio sits in the high-90s, depending on the layer and the quantizer.
+
+Yet 4-bit quantization gives you 4× compression with sub-perplexity-point quality loss. How?
+
+The trick isn't in the entropy of the weights. It's that *not all bits in an FP32 weight matter equally for next-token prediction*. The mantissa's low-order bits are essentially noise to the model. They don't change the gradient. Quantization is a lossy transform that throws away exactly those bits, and the reason it works at 4× is that loss-relevant precision is much lower than IEEE-754 precision. Task-aware compression beats general-purpose compression because the task is the side-channel that tells you which bits to keep.
+
+A small paradox falls out. Random init weights are uniform-ish; partially trained ones are still close to init. The trained model's weight distribution has *higher* entropy in the information-theoretic sense, because training spreads parameters out into something Gaussian. "Well-trained" and "looks random to gzip" are nearly the same statement. Training drives entropy up, task-relevance up faster, and quantization exploits the gap.
+
+The recent line of work — [EntroLLM (2025)](https://arxiv.org/abs/2505.02380) and [Rate-Constrained Quantization and Entropy Coding (2025)](https://arxiv.org/abs/2505.18758) — uses entropy coding *on top of* quantization, not instead of it. Quantize first to reduce the alphabet size, then Huffman-code the integer tensor. That's where lossless compression starts working, because the discrete codes are no longer maximum-entropy.
+
+The "task-aware bits beat IEEE-754 bits" framing is my own hypothesis, not a published result. I find it the cleanest way to reconcile the ratios you see, but I haven't proved it. The two papers above motivate the entropy-coding side; the gap to the gzip-on-FP32 ratio is where I'm extrapolating.
+
+<ParamPlot
+  compute="quantHw.entropyView"
+  title="Compression ratio: noise vs. trained weights vs. quantized + coded"
+  caption="Closed-form H(X)/H_max(X) proxy for what a general-purpose compressor would do on iid-ish data. IID Gaussian noise sits at 1.0 (no compression). Trained FP32 weights sit just under it. Quantized-then-entropy-coded sits where 4-bit lives."
+  kind="line"
+  xLabel="bits per code"
+  yLabel="compressed / FP32"
+  params={{ bits: 4, shape: 0.4, codeEntropy: 0.85 }}
+  controls={[
+    { kind: 'slider', param: 'bits', label: 'Quantizer bits', min: 2, max: 6, step: 1, format: 'int' },
+    { kind: 'slider', param: 'shape', label: 'Distribution (gauss → tail → bimodal)', min: 0, max: 2, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'codeEntropy', label: 'Entropy-coding efficiency', min: 0, max: 1, step: 0.05, format: 'decimal', hint: '1 = optimal Huffman; 0 = stored at log2(L) bits' },
+  ]}
+  height={300}
+/>
+
+<Callout tone="aside" title="Modelled, not measured">
+  The next plot is a closed-form proxy. I'm mapping (precision, algo) pairs to entropy-bound ratios with stylised compressor efficiencies (gzip ≈ 92%, zstd ≈ 95%, brotli ≈ 96% of the entropy floor). That's in the right ballpark for iid-ish float arrays, but it isn't a real benchmark on a Llama checkpoint. I'd love to run that experiment; until I do, treat the bars as the *shape* of the answer.
+</Callout>
+
+<ParamPlot
+  compute="quantHw.compressionRatios"
+  title="Modelled compression ratio across precisions and algorithms"
+  caption="One bar per (precision, algorithm) pair. Ratios are closed-form entropy-bound proxies, not measured. The big gap is between FP32/FP16 (where mantissa low-bits look like noise) and INT8/INT4 (where there's structure to exploit)."
+  kind="bar"
+  xLabel="precision · compressor"
+  yLabel="ratio vs FP32 raw"
+  params={{ shape: 0.4, paramsM: 7000 }}
+  controls={[
+    { kind: 'slider', param: 'shape', label: 'Distribution (gauss → tail → bimodal)', min: 0, max: 2, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'paramsM', label: 'Parameters (millions)', min: 100, max: 70000, step: 100, format: 'int' },
+  ]}
+  height={300}
+/>
+
+The point the bars make: gzip on FP32 weights barely buys you anything (you're paying for irreducible mantissa noise), but the same compressor on 4-bit codes is a real 1.3–1.5× *on top of* the 8× you already got from precision. That second factor is the whole reason entropy-coded weight formats are starting to ship.
+
+## What's actually moving
+
+Below 4 bits is the interesting regime. The four-paper backbone flattens the curve down to about 4 bits per weight; the 2024+ wave (QuIP#, AQLM, lattice codes, vector quantization, entropy-coded codebooks) is pushing into 2–3 bits, where "smarter scalar grid" stops being enough. You start needing structured codebooks, joint coding across weights, or task-aware allocation of the bits you have left.
+
+The hardware framing and the entropy framing meet here. Below 4 bits is where the bandwidth gain per bit is the largest you'll get, and it's also where the entropy of the discrete codes is finally low enough for general-purpose compressors to do real work. I think these are two views of the same fact: most of an FP32 weight is noise to the next-token loss, and below 4 bits is where you're finally compressing the part that isn't.

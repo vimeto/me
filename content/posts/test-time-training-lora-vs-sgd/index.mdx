@@ -1,0 +1,247 @@
+---
+title: "Test-time training: LoRA vs SGD"
+slug: test-time-training-lora-vs-sgd
+publishedAt: 2026-04-22
+summary: 'Test-time training updates a model''s weights at inference, once per prompt or batch. This post walks the geometry (LoRA vs full SGD) through four toy models and asks when the rank-r shortcut is fine, when it stalls, and what it costs you at serving time.'
+tags:
+  - language-models/inference/test-time-training
+  - optimization/low-rank
+category: Notes
+status: draft
+estimatedReadMin: 10
+---
+
+# Test-time training: LoRA vs SGD
+
+Most of what I do at inference is frozen weights and sampling. Test-time
+training (TTT) is the other thing: the model gets to nudge its own parameters
+on the prompt it's about to answer, either with a self-supervised objective
+([Test-Time Training](https://arxiv.org/abs/1909.13231) (2020)) or with a fresh
+inner-loop that treats each sequence like a tiny fine-tune (the
+[TTT-layers](https://arxiv.org/abs/2407.04620) (2024) paper makes this
+explicit). You pay extra FLOPs per request; you hope the loss on _this_
+example drops far enough to be worth it.
+
+Two design choices dominate the cost: how many weights are you willing to
+change, and how big are your steps. That's it, in four small plots.
+
+<Callout tone="insight" title="LoRA at test time is a subspace bet">
+  LoRA at test time is a rank budget on the update direction, not a cost
+  rebate. You get most of the adaptation benefit if the thing that needs
+  adapting already lives in a low-rank subspace, and very little of it if the
+  gradient is isotropic. Pick the rank after you look at where the gradient
+  mass actually lives.
+</Callout>
+
+## The premise: train a little, every time
+
+A TTT-adapted model answers a prompt in two phases. First, a short inner loop
+updates some subset of the weights with an auxiliary loss computed from the
+prompt itself (predict held-out tokens, reconstruct a rotated image, minimise
+next-token loss on the prompt, etc.). Second, the adapted model generates the
+answer. The update is then discarded. Each prompt gets a freshly adapted copy,
+and the base checkpoint never moves.
+
+The original [Test-Time Training](https://arxiv.org/abs/1909.13231) paper
+adapts the whole network with full SGD, one step per test image.
+[TTT-layers](https://arxiv.org/abs/2407.04620) treats the hidden state _as_
+a learnable model and does the inner loop inside the forward pass. The knob
+common to every version is the same: how much of $W$ do you let move?
+
+## Low-rank update geometry
+
+[LoRA](https://arxiv.org/abs/2106.09685) (2021) constrains the update to a
+rank-$r$ subspace:
+
+$$
+W_\text{adapted} = W + \Delta W, \quad \Delta W = B A,\quad B \in \mathbb{R}^{d\times r}, \; A \in \mathbb{R}^{r\times d}.
+$$
+
+Whatever gradient signal you would have applied to the full $d\times d$ matrix
+gets projected onto the column space of $B$ and the row space of $A$. So the
+question "is LoRA enough?" is really "how much of $\nabla_W \mathcal{L}$ lives
+in that subspace?"
+
+For a random direction in $\mathbb{R}^d$ and a random rank-$r$ subspace, the
+expected captured fraction is exactly $r/d$. For gradients that concentrate on
+a few coordinates (anything that looks like "only a handful of neurons matter
+for this example"), the number can be much higher.
+
+<ParamPlot
+  compute="ttt.loraCapture"
+  title="How much of the update direction a rank-r LoRA catches"
+  caption="Straight line: isotropic gradient (capture = r/d). Curve above it: a power-law gradient where the top few coordinates already dominate. Real training gradients sit somewhere between these two."
+  kind="line"
+  xLabel="LoRA rank r"
+  yLabel="captured fraction"
+  params={{ d: 1024, rMax: 128, target: 0.5, alpha: 0.8 }}
+  controls={[
+    { kind: 'slider', param: 'd', label: 'Model width d', min: 128, max: 4096, step: 64, format: 'int' },
+    { kind: 'slider', param: 'rMax', label: 'Max rank on x-axis', min: 8, max: 256, step: 4, format: 'int' },
+    { kind: 'slider', param: 'alpha', label: 'Gradient concentration α', min: 0.2, max: 2.0, step: 0.05, format: 'decimal', hint: 'higher α = more concentrated in top coords' },
+    { kind: 'slider', param: 'target', label: 'Target capture', min: 0.1, max: 0.95, step: 0.05, format: 'percent' },
+  ]}
+  height={280}
+/>
+
+Pin $d = 1024$ in the plot above and slide $\alpha$. At $\alpha = 0.2$ (nearly
+isotropic) you need a rank in the hundreds to catch half the update; at
+$\alpha = 1.5$ a rank of 16 gets you most of the way. This isn't a story about
+whether LoRA works. It's a story about whether the _particular gradient you're
+projecting_ has the structure LoRA likes.
+
+<Callout tone="aside" title="Random subspace vs learned subspace">
+  The $r/d$ result assumes the subspace is chosen before you look at the
+  gradient. Standard LoRA fine-tuning _learns_ $A$ and $B$ from data, so the
+  subspace aligns with directions the training loss actually cares about
+  (empirically much better than random). TTT is different: the adaptation
+  subspace has to be fixed before the test prompt arrives, or you pay an
+  extra forward–backward pass to choose it. The isotropic lower bound is a
+  reasonable worst case.
+</Callout>
+
+## Full SGD vs LoRA: two trajectories
+
+Here's the toy version. Take the loss surface $f(x, y) = \tfrac{1}{2}(x^2 +
+c\,y^2)$ with $c > 1$ (a stretched bowl, minimum at the origin). Full SGD from
+some off-axis initial point zigzags a bit but gets there. LoRA rank-1 in 2D
+means we project every gradient onto a fixed 1D direction $u = (\cos\theta,
+\sin\theta)$. Pick $u$ poorly and the trajectory stops at whatever point on
+the line $\text{span}(u)$ is closest to the initialisation. It can't make
+progress off the line, ever.
+
+<ParamPlot
+  compute="ttt.trajectory"
+  title="Trajectory: full SGD vs LoRA rank-1 in 2D"
+  caption="Ellipsoidal loss with curvature c in y. LoRA here projects every gradient onto a single direction set by θ; when θ is far from the true descent direction, the LoRA path gets stuck on the span."
+  kind="line"
+  xLabel="x"
+  yLabel="y"
+  params={{ lr: 0.15, steps: 60, curvature: 5, theta: 0, x0: 1.6, y0: 1.2 }}
+  controls={[
+    { kind: 'slider', param: 'lr', label: 'Learning rate η', min: 0.01, max: 0.6, step: 0.01, format: 'decimal' },
+    { kind: 'slider', param: 'steps', label: 'TTT steps', min: 5, max: 200, step: 1, format: 'int' },
+    { kind: 'slider', param: 'curvature', label: 'y-curvature c', min: 1, max: 20, step: 0.5, format: 'decimal', hint: 'bigger c = more elongated bowl' },
+    { kind: 'slider', param: 'theta', label: 'LoRA direction θ (rad)', min: -1.5, max: 1.5, step: 0.05, format: 'decimal', hint: '0 = x-axis only; π/2 = y-axis only' },
+  ]}
+  height={300}
+/>
+
+Two quick experiments:
+
+1. Set $\theta = 0$ and $c = 5$. The LoRA path shoots to $y = 1.2$ on the
+   x-axis, hits $x = 0$, and _stops_. It's lost all ability to reduce $y$.
+   Full SGD gets there in a zigzag (slowly, but it gets there).
+2. Set $\theta = \arctan(1.2/1.6) \approx 0.64$ (aimed at the init vector) and
+   watch the LoRA path go straight to the origin. The right subspace makes
+   rank-1 indistinguishable from full.
+
+That's the geometric claim: LoRA stalls iff the descent direction has a
+persistent component orthogonal to the chosen subspace.
+
+<Callout tone="warn" title="The test-time failure mode">
+  At train time you get thousands of batches to correct a suboptimal LoRA
+  subspace. At test time you get one prompt and a handful of inner steps. If
+  the gradient at this particular example points somewhere the rank-r
+  adapter can't reach, TTT-LoRA will confidently converge to a point that
+  isn't a minimum, and you'll ship that adapted model's answer.
+</Callout>
+
+## The adaptation curve
+
+Collapse the whole trajectory down to a single scalar (the loss on the
+auxiliary objective) and watch it evolve as we take more inner steps. For a
+convex proxy loss near a minimum, you expect
+
+$$
+\mathcal{L}(t) \approx \mathcal{L}_0 \cdot e^{-\eta\, t} + \varepsilon,
+$$
+
+where $\varepsilon$ is the noise floor of whatever self-supervised signal
+you're using. Too-small $\eta$: the curve decays slowly and you run out of
+inference budget before it does anything useful. Too-big $\eta$: the inner
+optimiser overshoots, the loss _grows_, and the adapted model is now strictly
+worse than the base. There's a usable band in between.
+
+<ParamPlot
+  compute="ttt.adaptCurve"
+  title="TTT loss vs inner-loop step, for three learning rates"
+  caption="Three η values bracketed around the critical learning rate. 'Small' decays to the noise floor in 50-ish steps; 'good' gets there in 10; 'too big' diverges geometrically and is clamped for plotting."
+  kind="line"
+  xLabel="TTT step t"
+  yLabel="auxiliary loss L(t)"
+  params={{ etaSmall: 0.02, etaGood: 0.15, etaBig: 0.45, L0: 1, etaCrit: 0.35, steps: 80, noise: 0.01 }}
+  controls={[
+    { kind: 'slider', param: 'etaSmall', label: 'η small', min: 0.005, max: 0.2, step: 0.005, format: 'decimal' },
+    { kind: 'slider', param: 'etaGood', label: 'η good', min: 0.02, max: 0.35, step: 0.01, format: 'decimal' },
+    { kind: 'slider', param: 'etaBig', label: 'η too big', min: 0.2, max: 0.9, step: 0.01, format: 'decimal' },
+    { kind: 'slider', param: 'steps', label: 'Inner-loop steps', min: 10, max: 200, step: 5, format: 'int' },
+    { kind: 'slider', param: 'noise', label: 'Noise floor', min: 0, max: 0.1, step: 0.005, format: 'decimal' },
+  ]}
+  height={280}
+/>
+
+The practical implication is sharper than "pick a learning rate". At train
+time, a too-big $\eta$ just means noisy updates that a scheduler eventually
+tames. At test time there's no scheduler and no next epoch. A single divergent
+inner loop is a shipped bad answer. TTT serving wants $\eta$ slightly below
+the largest stable value (not at the sweet spot, below the cliff).
+
+## Compute budget: what it costs at serve time
+
+TTT-LoRA's per-request cost is real: you do an extra forward pass on the
+auxiliary loss, a backward pass through just the LoRA adapters, and an
+optimiser step. If the base model forward takes $\ell_0$ ms and each unit of
+adapter rank adds $c$ ms of extra forward+backward, we can model
+
+$$
+\ell(r) = \ell_0 + r\, c, \qquad q(r) = 1 - e^{-r/\tau},
+$$
+
+where $q$ is the adaptation quality gain and $\tau$ is the "characteristic
+rank" at which most of the gain is already realised. The interesting object
+is the Pareto curve of quality vs latency.
+
+<ParamPlot
+  compute="ttt.budget"
+  title="Quality gain vs added latency, as a function of LoRA rank"
+  caption="Pareto frontier as r sweeps 1..r_max. Leftmost vline: the heuristic knee (marginal quality per ms stops paying off). Rightmost vline: your latency budget. The band past it is rank you cannot afford."
+  kind="line"
+  xLabel="per-request latency (ms)"
+  yLabel="adaptation quality q(r)"
+  params={{ baseLatency: 20, perRankCost: 1.2, tau: 8, rMax: 64, budgetMs: 80 }}
+  controls={[
+    { kind: 'slider', param: 'baseLatency', label: 'Base forward (ms)', min: 5, max: 100, step: 1, format: 'int' },
+    { kind: 'slider', param: 'perRankCost', label: 'Per-rank cost (ms)', min: 0.2, max: 5, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'tau', label: 'Characteristic rank τ', min: 1, max: 40, step: 1, format: 'int' },
+    { kind: 'slider', param: 'rMax', label: 'Max rank considered', min: 8, max: 128, step: 4, format: 'int' },
+    { kind: 'slider', param: 'budgetMs', label: 'Latency budget (ms)', min: 20, max: 200, step: 5, format: 'int' },
+  ]}
+  height={280}
+/>
+
+Two places this plot argues with intuition:
+
+- The smallest rank that reaches 80% of the adaptation ceiling sits well
+  short of $r_{\max}$ (around $1.6\,\tau$ for this saturation model), because
+  latency grows linearly while $q(r)$ has diminishing returns. Serving TTT
+  wants that rank, not the one at which quality maxes out. This is the knee
+  my `parameter-golf` solver actually picks when it's sizing a deployment:
+  the rank that maximises quality-per-ms, not the rank that maximises quality.
+- If the per-rank cost is dominated by the backward pass (usually is), a
+  small improvement in backward-pass throughput is worth more than a big
+  improvement in forward-pass throughput. Inference accelerators designed
+  around forward-only workloads have this exactly backwards for TTT.
+
+## Check yourself
+
+<Quiz
+  question="You run TTT with a rank-1 LoRA adapter. On a toy ellipsoidal loss with minimum off the adapter's 1D subspace, what happens?"
+  choices={[
+    { text: 'The trajectory reaches the minimum; rank-1 is enough in any 2D problem.' },
+    { text: 'The trajectory converges to the projection of the minimum onto the subspace, and cannot reduce loss further no matter how many steps you take.', correct: true },
+    { text: 'The trajectory diverges because rank-1 is under-parameterised.' },
+    { text: 'The trajectory reaches a different minimum chosen by random initialisation of B and A.' },
+  ]}
+  explanation="LoRA constrains ΔW to lie in a fixed subspace. Any gradient component orthogonal to that subspace is projected away every step, so the iterate lives on the affine set {init + span(u)} forever. Gradient descent on that restricted set converges to the closest point on the subspace to the true minimum, which isn't the true minimum unless the subspace contains it."
+/>

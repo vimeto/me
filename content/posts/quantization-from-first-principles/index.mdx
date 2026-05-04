@@ -1,0 +1,206 @@
+---
+title: Quantization from first principles
+slug: quantization-from-first-principles
+publishedAt: 2026-04-22
+summary: "A ground-up tour of the ideas that make int4 serving work: the memory-bandwidth argument, RTN, GPTQ's error feedback, SmoothQuant's activation rescaling, and AWQ's salience protection."
+tags:
+  - language-models/inference/quantization
+  - ml-systems/hardware
+status: draft
+---
+
+# Quantization from first principles
+
+Quantization surprised me. I came in expecting a pile of tricks and left thinking the techniques are straightforward. The math is pretty too. It also helps in both directions: smaller hardware runs bigger models, and bigger hardware runs them faster.
+
+RTN → GPTQ (2022) → SmoothQuant (2022) → AWQ (2023) → 2024+ (QuIP#, HQQ, SpinQuant, …). GPTQ patches RTN. SmoothQuant patches what RTN does to activations. AWQ patches what all of them miss about channel importance. The 2024+ wave pushes into 2-bit with fancier tricks, but the first four are the conceptual backbone. Most of what came after is a refinement of one of their moves. Each paper reads cleanly on its own. What connects them took me longer to see.
+
+They're all the same move in different coordinates. Pick grid points. Push error somewhere it matters less. Rescale the axis so the grid fits the data. Protect the few channels where a flip is catastrophic.
+
+## Why quantize at all
+
+Dense decoder inference is memory-bound on any hardware a normal person owns. Every forward token reads every weight from HBM once. At $P$ parameters and $b$ bits per weight:
+
+$$
+\text{bytes per token} = \frac{P \cdot b}{8}.
+$$
+
+Time to move those bytes over a bus with bandwidth $B$ is $Pb/(8B)$. A 70B model at FP16 reads 140 GB per token. On a laptop-grade 800 GB/s link that caps you at ~5.7 tokens per second (before any arithmetic at all). Drop to int4: bytes shrink 4×, ceiling rises 4×.
+
+<ParamPlot
+  compute="quant.memoryMath"
+  title="Bandwidth ceiling vs. bit width"
+  caption="Two curves: GB read per token and the implied memory-bound tokens/sec. The knee near 4–5 bits is why int4 is a sweet spot on commodity hardware."
+  kind="line"
+  xLabel="bits per weight"
+  yLabel="value"
+  params={{ paramsB: 70, bandwidthGBs: 800, bits: 4 }}
+  controls={[
+    { kind: 'slider', param: 'paramsB', label: 'Model size (B params)', min: 1, max: 200, step: 1, format: 'int', hint: '7, 13, 70, 180 are common points' },
+    { kind: 'slider', param: 'bandwidthGBs', label: 'Memory bandwidth (GB/s)', min: 50, max: 4000, step: 50, format: 'int', hint: 'Apple M-series unified memory is ~400 GB/s; H100 HBM3 is ~3350 GB/s' },
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 16, step: 1, format: 'int' },
+  ]}
+  height={280}
+/>
+
+That's the whole motivation. You aren't trying to make matmul faster (arithmetic isn't the bottleneck). You're trying to shrink the weights so the bus can feed them. Everything downstream is about doing that without tanking accuracy.
+
+<Callout tone="info" title="What scalar quantization is">
+  Scalar quantization picks a finite set of grid points on the real
+  line and snaps each weight to the nearest one. Two knobs: *how many*
+  points ($2^b$), and *where* they sit (the scale). Every technique in
+  this post is a different policy for the second knob.
+</Callout>
+
+## Round-to-nearest
+
+Pick a symmetric range $[-R, R]$ and divide it into $2^b$ evenly-spaced grid levels. The scale is $s = R / (2^{b-1} - 1)$ and the quantizer is
+
+$$
+q(w) = s \cdot \operatorname{round}(w / s).
+$$
+
+Inside the representable range the error $q(w) - w$ lives in $[-s/2, s/2]$. A sawtooth with period $s$. Outside, you're clipping, and the error grows without bound. The plot below lets you slide both knobs: bit width (the period of the sawtooth) and `clipFrac` (where $R$ sits relative to the weight magnitudes shown).
+
+<ParamPlot
+  compute="quant.rtnError"
+  title="RTN error vs. weight value"
+  caption="Sawtooth is the bounded rounding error inside [-R, R]. Hatched bands show the clipping region, where error grows linearly with |w|."
+  kind="line"
+  xLabel="weight"
+  yLabel="q(w) − w"
+  params={{ bits: 4, wMax: 1, clipFrac: 1 }}
+  controls={[
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 8, step: 1, format: 'int', hint: 'Grid levels = 2^bits' },
+    { kind: 'slider', param: 'wMax', label: 'Weight magnitude', min: 0.5, max: 3, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'clipFrac', label: 'Clip R / wMax', min: 0.2, max: 1, step: 0.05, format: 'percent', hint: 'Shrink to watch clipping damage explode' },
+  ]}
+  height={280}
+/>
+
+Two things fall out:
+
+1. **Halving bits doubles the step.** The sawtooth amplitude is $s/2 \propto R/2^b$. Each bit you drop doubles the worst-case error inside the range. Linear. That's the best case.
+2. **Clipping isn't linear.** Pull $R$ in by 20% and the clipped weights on the tails see an error that grows without bound. A single badly-placed outlier per channel can drag a loss metric noticeably. This is why per-channel scales are the first thing practitioners reach for (one $R$ per output channel, not one per tensor): each channel sets its own range, so the worst channel's outliers don't contaminate the rest.
+
+<Callout tone="insight" title="Per-channel scales: weights vs. activations">
+  This works for *weights* because per-channel weight distributions are
+  usually tame. It does nothing for *activations*, where the real
+  outliers live at inference time. Hold that thought (it's the setup for
+  SmoothQuant).
+</Callout>
+
+## Error feedback
+
+RTN treats every weight independently. It shouldn't. Weights in a linear layer are hit by correlated inputs during the forward pass, so the output error from quantizing $w_i$ couples to every other weight in the same column through the input Gram matrix (the Hessian of the MSE objective).
+
+[GPTQ](https://arxiv.org/abs/2210.17323) (2022) is what you get when you take that coupling seriously. Quantize weights one at a time, left to right. When you snap $w_i$ to the nearest grid level you incur a residual $r_i = q(w_i) - w_i$. Instead of throwing $r_i$ away, push it onto the unquantized weights $w_j$ for $j > i$, in proportions given by the Hessian-inverse column:
+
+$$
+w_j \leftarrow w_j - r_i \cdot \frac{(H^{-1})_{ij}}{(H^{-1})_{ii}}.
+$$
+
+The error budget goes where it hurts least. If quantizing $w_i$ overshoots by $r_i$, some later weight gets nudged the opposite way so the row's output is preserved in expectation.
+
+<ParamPlot
+  compute="quant.gptqFeedback"
+  title="Cumulative output error: RTN vs. GPTQ"
+  caption="|Σ r_i| over a left-to-right sweep. RTN's errors accumulate as a random walk (√n growth); GPTQ's feedback makes them telescope, so the line stays bounded by one grid step. ρ controls feedback strength."
+  kind="line"
+  xLabel="weights quantized"
+  yLabel="|Σ residuals|"
+  params={{ bits: 3, rho: 0.7, n: 120, trials: 64 }}
+  controls={[
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 6, step: 1, format: 'int' },
+    { kind: 'slider', param: 'rho', label: 'Feedback ρ', min: 0, max: 1, step: 0.05, format: 'decimal', hint: '0 = RTN; 1 = residuals telescope exactly (OBS for AR(1))' },
+    { kind: 'slider', param: 'n', label: 'Weight count', min: 40, max: 400, step: 10, format: 'int' },
+    { kind: 'slider', param: 'trials', label: 'Monte-Carlo trials', min: 1, max: 256, step: 1, format: 'int', hint: 'Plot is RMS over this many seeds' },
+  ]}
+  height={300}
+/>
+
+This toy doesn't implement a real Hessian. It uses a scalar feedback strength $\rho$ as a stand-in for the OBS update (correct when the inverse Hessian is tridiagonal, i.e. AR(1) coupling). At $\rho = 0$ the two curves overlay: no feedback, nothing for GPTQ to do. Crank $\rho$ toward $1$ and the GPTQ line flattens near one grid step while RTN's random walk keeps drifting. That's the point of error feedback: it *telescopes*. The total output error never accumulates. Drop bits and both curves scale up by the grid step, but the ratio stays in GPTQ's favour.
+
+The real paper uses a Cholesky factorisation of $H^{-1}$ with a lazy-batch update trick, giving per-layer complexity $O(d_{\text{col}}^2 \cdot d_{\text{row}})$ (same order as a forward pass). Headline result: 3–4 bit quantization of OPT-175B and BLOOM-176B with small perplexity regressions. First time it had worked on trillion-parameter models, and the paper that made int3/int4 inference practical outside of demos.
+
+## Activation outliers
+
+GPTQ's feedback only helps if *weight* quantization is the dominant error source. In large language models, I think it usually isn't. Activations are where the real damage happens. A handful of channels in the residual stream carry magnitudes 10–100× the rest. Per-token per-tensor RTN on the activations has to pick a scale large enough to cover those outliers, and the other 99% of channels end up living in one or two grid levels. Most of the representational budget goes to a few spikes; the bulk of the signal turns into noise.
+
+You can't drop the outliers (those channels matter). But you can *move the magnitude*. [SmoothQuant](https://arxiv.org/abs/2211.10438) (2022) rescales activation channels by a per-channel vector and absorbs the inverse into the weight rows of the next linear:
+
+$$
+X W = (X \operatorname{diag}(m)^{-1}) (\operatorname{diag}(m) W).
+$$
+
+The matmul result is algebraically unchanged. What shifts is the dynamic range each side has to handle. The paper's Eq. 4 picks $m_j = \max|X_j|^\alpha / \max|W_j|^{1-\alpha}$. For teaching I use an equivalent-in-spirit simplification, $m_j = (\max|X_j| / \max|W_j|)^\alpha$, so $\alpha = 0$ reads as "no migration" and $\alpha = 1$ as "push all activation range onto the weights". Somewhere in the middle both sides get quantizer-friendly.
+
+<ParamPlot
+  compute="quant.smoothquantRescale"
+  title="Effective dynamic range vs. α"
+  caption="Two series: max/median channel magnitude for activations and weights after SmoothQuant migration. The crossover is where both sides fit comfortably on a small grid."
+  kind="line"
+  xLabel="α (migration strength)"
+  yLabel="max / median"
+  params={{ alpha: 0.5, spike: 30, nSpikes: 3 }}
+  controls={[
+    { kind: 'slider', param: 'alpha', label: 'α', min: 0, max: 1, step: 0.05, format: 'decimal', hint: 'Paper default α = 0.5 (OPT, BLOOM); α = 0.75 for GLM-130B where outliers are ~30% of channels' },
+    { kind: 'slider', param: 'spike', label: 'Outlier × median', min: 3, max: 100, step: 1, format: 'int' },
+    { kind: 'slider', param: 'nSpikes', label: 'Outlier channels', min: 1, max: 8, step: 1, format: 'int' },
+  ]}
+  height={300}
+/>
+
+At $\alpha = 0$, activations span ~30× median (because of the spikes) and weights span ~3×. Crank $\alpha$ and the activation curve falls fast while the weight curve rises gently. The two cross somewhere in the middle. That's the zone where neither side wastes grid levels on the other's outliers. SmoothQuant's recipe is basically: find the crossover offline on calibration data, bake it into the weights, ship.
+
+<Callout tone="warn" title="When SmoothQuant stops working">
+  The technique works because activation outliers are concentrated in a
+  small, consistent set of channels across inputs. If your outliers
+  were *token-dependent* (different channels spiking for different
+  inputs), no static $m$ would help. Post-layer-norm residual streams
+  are well-behaved in that sense, which is why the trick generalises.
+</Callout>
+
+## Not all channels are equal
+
+SmoothQuant treats channels democratically: every channel gets a migration coefficient derived from its own magnitude. [AWQ](https://arxiv.org/abs/2306.00978) (2023) takes the opposite view. A tiny fraction of channels dominate the output; the rest barely matter. The salience criterion is **activation magnitude alone** (averaged over calibration data). The paper's Table 1 shows that selecting by activation magnitude gives a huge jump, while selecting by weight magnitude is no better than random.
+
+AWQ's contribution is what to do once you've identified the top 0.1–1% salient channels. *Not* keep them in FP16 (mixed-precision matmul is hardware-inefficient). Instead, give them a larger per-channel scale so their rounding step is finer. The scale is searched as $s = s_X^\alpha$ with $\alpha$ picked by a 20-point grid search on calibration data.
+
+The argument is empirical and Pareto-flavoured. If salience follows something like $s_i \propto 1/i^\beta$, then capturing most of the total salience costs very little grid budget.
+
+<ParamPlot
+  compute="quant.awqSalience"
+  title="Cumulative salience captured vs. protected fraction"
+  caption="The CDF of a Pareto-ish salience distribution. Vertical line is the protected top α%; the horizontal readout is the fraction of total salience captured."
+  kind="area"
+  xLabel="protected channels (%)"
+  yLabel="cumulative salience"
+  params={{ beta: 1.1, alpha: 1 }}
+  controls={[
+    { kind: 'slider', param: 'alpha', label: 'Protect top α%', min: 0.1, max: 20, step: 0.1, format: 'decimal', hint: 'AWQ uses α ≈ 1% in the paper' },
+    { kind: 'slider', param: 'beta', label: 'Pareto β', min: 0.4, max: 2.5, step: 0.05, format: 'decimal', hint: 'Larger = more skewed' },
+  ]}
+  height={280}
+/>
+
+With $\beta = 1.1$ (a stylised value, in the range where head-heavy activation distributions live), protecting the top 1% of channels captures about 40% of the total salience; the top 5% captures roughly two thirds. How much to protect is a hyperparameter, but the shape of the curve is the answer. You don't need to protect many channels. Most of the mass is already in the head.
+
+The AWQ kernel result is, I think, the cleanest demonstration of this line of thinking: int4 weights with a per-group scale, ~1% salient channels rescaled rather than stored at higher precision, no mixed-precision matmul at inference time. The authors report WikiText-2 perplexity of 5.78 (LLaMA-7B), 5.19 (13B), and 3.62 (70B) at INT4-g128. Gaps of ~0.1 against FP16 across the range.
+
+This progression is the conceptual backbone of [parameter-golf](https://github.com/), the runtime I'm building to serve int4 LLMs on a laptop by composing these tricks in the right order. The plots above are the same sanity checks I reach for when a quantized checkpoint starts disagreeing with its FP16 twin on a hard example.
+
+## Check yourself
+
+<Quiz
+  question="You apply RTN at int4 to a weight matrix with one clear outlier channel (magnitude 20× the median). You switch to per-channel scales. What should you expect?"
+  choices={[
+    { text: 'The outlier channel is fine now. Each channel gets its own scale, so the outlier channel has a larger step and everything else is unaffected.', correct: true },
+    { text: 'The outlier channel still clips, because per-channel scales do not change the bit width.' },
+    { text: 'Accuracy gets worse, because the non-outlier channels now have larger steps.' },
+    { text: 'Per-channel scales only help activations, not weights.' },
+  ]}
+  explanation="Per-channel weight scales do exactly what they say: each output channel picks its own R (and therefore its own step s). The outlier channel gets a coarser grid, but it only spans *that* channel. Other channels see a tighter range and a smaller step (the opposite of option 3). This is why per-channel weight quantization is almost always the baseline before you reach for GPTQ/AWQ/SmoothQuant: it's cheap and it stops one outlier from contaminating an entire tensor."
+/>
+
+Writing this down forced me to stop treating the papers as a bag of techniques and start treating them as one story about where the error goes. The good news, as I kept realising while drawing the plots: the field is cleaner than it looks from the outside.

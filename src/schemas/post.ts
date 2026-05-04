@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { ComponentType } from 'react'
 import type { MDXProps } from 'mdx/types'
+import { isValidTag } from '../lib/tags'
 
 export const PostFrontmatter = z
   .object({
@@ -12,7 +13,14 @@ export const PostFrontmatter = z
     publishedAt: z.iso.date(),
     updatedAt: z.iso.date().optional(),
     summary: z.string().min(1).max(320),
-    tags: z.array(z.string()).default([]),
+    tags: z
+      .array(
+        z.string().refine(isValidTag, {
+          message:
+            'tag must be a valid path from src/lib/tags.ts tagTree (e.g. "language-models/inference/quantization")',
+        })
+      )
+      .default([]),
     category: z.string().optional(),
     status: z.enum(['draft', 'published']).default('draft'),
     estimatedReadMin: z.number().positive().optional(),

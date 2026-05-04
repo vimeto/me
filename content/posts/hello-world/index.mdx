@@ -1,109 +1,46 @@
 ---
-title: Hello, blog
+title: "Hi!"
 slug: hello-world
-publishedAt: 2026-04-21
-summary: A first post exercising the v2 blog registry — MDX, KaTeX, Shiki, and an interactive GPTQ flipping-range visualization.
-tags: [meta]
+publishedAt: 2026-03-20
+summary: "A short note on who's writing this blog and why."
+tags:
+  - lab-notes
 category: Lab Notes
 status: published
-estimatedReadMin: 3
 ---
 
-# Hello, blog
+# Hi!
 
-This post is the Phase 1 acceptance test for the v2 blog pipeline. If the
-interactive visualization below responds to the sliders, the full chain —
-MDX → Zod-validated block props → compute registry → visx plot — is working.
+I find I don't actually understand a paper until I've tried to explain it. This site is me trying.
 
-<Callout tone="insight" title="What this page tests">
-  Every interactive block on this blog is a schema-validated component keyed
-  into a small compute registry. The MDX file declares *what* to show; the
-  registry decides *how* to run it.
+The hero page on this site already covers the main facts about me, so I won't repeat them here. The short version: I've ended up in an exciting place with duties in three worlds: academic, corporate, and startup, and I plan on writing about whatever I find interesting in any of them. For now most of the weight will sit on my doctoral work, which is small-to-medium-sized language model inference and post-training. That's where I spend most of my working hours, so that's what I'll have something to say about first.
+
+As a hobby, I also take part in hackathons, competitions, and similar low-stakes ways to ship something rough on a deadline. A few of those will probably leak in.
+
+## Why the blog format
+
+In academia, everything revolves around writing papers. So how do these posts differ from manuscripts? And who are the intended readers?
+
+Research incentives are genuinely hard to get right, much harder than industry's. Industry has clearer targets (revenue, profit, maybe valuation). Short or long term, those are at least measurable, and they tie back to whether the company keeps existing, and ultimately maximizing them also maximizes shareholders personal gain. Academia decided to use research papers as its equivalent. I think that's a meaningfully worse target than it looks.
+
+In my view of the perfect world, a research paper would just be a well-written way to communicate done research to other researchers. But due to incentive structures, at least here in Finland, it is very different. It is, largely, the driving force behind research itself. Gaps in existing papers are identified and iterated on, not because they have important implications, but because they serve as easy starting points to write and submit papers to journals and conferences. I, being in academia, am also guilty of this to a certain degree.
+
+The golden idea I have behind this freely-controllable blog format is to project my views that do not end up in any papers. My current idea is, that I will synthesize findings from interesting papers I find, and their possible implications, publish my negative results, failed experiments, or some ideas I come across in the non-academic world. I plan to measure the success of this blog not by the number of active readers, but by the number of posts I write by the end of 2026. My goal is to have 20 blog posts written in 2026, all being ones which I feel proud of.
+
+## Blog technical details
+
+Most of these blogposts are technical reflections on things I found prettier than I expected, or an overview of results. As a visual learner myself, I decided to build a system for visual mini-simulations instead of static plots to convey these ideas. This allows you to *feel* the shape of the curve, its sensitivity to a certain parameter, etc.
+
+Mechanically, every interactive block on this site is a small schema-validated component keyed into a compute registry. The MDX file (the format I write these blogposts in) says what to plot; the registry decides how to compute it. I'll write about this site properly somewhere else; it doesn't belong in an intro.
+
+## Learn in public, with footnotes
+
+I'm writing this blog mostly to force my own clarity. The side effect is that someone landing here from a link to a deeper post can get a sense of whose voice they're reading. If a slider on this site changes the shape of an argument for you, that's an additional, huge win.
+
+<Callout tone="aside" title="On LM-written content">
+  Given how much LM-generated writing is passed around as original thought, I want to be upfront about which posts I wrote by hand and which I didn't. Right now: all of these posts are hand-written. The coding underneath them is mostly Codex/Claude Code. If that ever changes for a post, I'll say so at the top of that post.
 </Callout>
 
-## The GPTQ flipping range
+Comments are open. I plan to read them. If something in a post is wrong, or you've seen the same thing from a better angle, I genuinely want to know.
 
-Round-to-nearest quantization on a scalar weight $w$ (in grid units) flips to a
-different level when an additive perturbation pushes $w$ across the nearest
-half-integer boundary. If the perturbation is approximately Gaussian with std
-$\sigma$,
-
-$$
-p_\text{flip}(w) = 2 \left(1 - \Phi\!\left(\frac{d(w)}{\sigma}\right)\right),
-$$
-
-where $d(w)$ is the distance from $w$ to the nearest half-integer. The
-"flipping range" is the set of $w$ where $p_\text{flip}(w) \ge \tau$.
-
-<ParamPlot
-  compute="gptq.flippingRange"
-  title="Flipping probability vs. weight value"
-  caption="Teal curve: per-weight flip probability. Hatched bands: flipping range (probability above threshold)."
-  kind="line"
-  xLabel="weight (grid units)"
-  yLabel="flip probability"
-  params={{ bits: 3, sigma: 0.25, threshold: 0.3, range: 3 }}
-  controls={[
-    { kind: "slider", param: "bits", label: "Bits", min: 2, max: 8, step: 1, format: "int", hint: "Grid levels = 2^bits" },
-    { kind: "slider", param: "sigma", label: "Noise σ", min: 0.02, max: 0.8, step: 0.01, format: "decimal", hint: "In grid units" },
-    { kind: "slider", param: "threshold", label: "Threshold τ", min: 0.05, max: 0.95, step: 0.05, format: "percent" },
-    { kind: "slider", param: "range", label: "Domain", min: 1, max: 5, step: 1, format: "int", hint: "± grid units shown" }
-  ]}
-/>
-
-## What runs under the hood
-
-- **MDX** compiled by `@mdx-js/rollup` and loaded through `import.meta.glob`.
-- **Frontmatter** validated at import time by a strict Zod schema.
-- **Block props** are also Zod-validated at render time (`src/schemas/blocks.ts`).
-- **Compute registry** at `src/components/mdx/compute/index.ts` maps string keys
-  to pure functions — adding a new visualization only requires a new entry.
-
-```ts
-export const computeRegistry: Record<string, ComputeFn> = {
-  'gptq.flippingRange': gptqFlippingRange,
-}
-```
-
-<Callout tone="aside" title="Why a registry">
-  Keeping compute logic out of JSX lets the MDX stay declarative and
-  statically validatable. The same `ParamPlot` block powers every future
-  post — only the `compute` key and `params` change.
-</Callout>
-
-## A primitive animation loop
-
-<LoopedSVG preset="orbit" title="Orbit" caption="Decorative SVG loop — pauses on demand." />
-
-## A second compute: M/M/1 tail latency
-
-The same `ParamPlot` block, a different compute key. Drag the arrival rate up
-against the service rate to watch the tail blow up as $\rho \to 1$.
-
-<ParamPlot
-  compute="serving.latencyTail"
-  title="P(response time > t) for M/M/1"
-  caption="Solid curve: survival probability. Vertical line: SLA. Hatched band: beyond p99."
-  kind="area"
-  xLabel="latency (ms)"
-  yLabel="P(T > t)"
-  params={{ qps: 120, serviceMs: 6, slaMs: 50, rangeMs: 200 }}
-  controls={[
-    { kind: "slider", param: "qps", label: "Arrival rate (qps)", min: 10, max: 200, step: 5, format: "int" },
-    { kind: "slider", param: "serviceMs", label: "Service time (ms)", min: 1, max: 20, step: 0.5, format: "decimal" },
-    { kind: "slider", param: "slaMs", label: "SLA (ms)", min: 10, max: 300, step: 5, format: "int" },
-    { kind: "slider", param: "rangeMs", label: "x-axis max (ms)", min: 50, max: 600, step: 10, format: "int" }
-  ]}
-/>
-
-## Check yourself
-
-<Quiz
-  question="What happens if you bump the noise σ past the half-integer distance?"
-  choices={[
-    { text: "Flip probability collapses to zero.", correct: false },
-    { text: "Flip probability approaches 1 because the Gaussian mass past the boundary becomes a full half.", correct: true },
-    { text: "The integer grid stops mattering and every weight flips to zero.", correct: false }
-  ]}
-  explanation="Once σ is large compared to d(w), both tails of the Gaussian flow past the nearest boundary and p_flip → 1."
-/>
+That's it for the intro. The other posts carry the technical weight; this one was just to set the voice, introduce my reasons for doing this, and set the stakes. Go drag a slider.

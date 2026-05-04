@@ -1,0 +1,268 @@
+---
+title: The modern transformer block (everything except attention)
+slug: modern-transformer-block-without-attention
+publishedAt: 2026-03-27
+summary: "Open the code for Llama, Qwen, DeepSeek, Gemma, and you'll find nearly identical design decisions. What has changed since the 2017 paper, in normalisation, gating, tokenizer, embeddings, position, and why each swap stuck."
+tags:
+  - language-models/architecture/normalization
+  - language-models/architecture/feed-forward
+  - language-models/architecture/sequence-modeling
+  - language-models/architecture/positional
+status: published
+---
+
+# The modern transformer block (everything except attention)
+
+I keep opening modelling code from a different lab and finding the same block. Llama, Qwen, DeepSeek, Gemma, Phi. Different teams, different stacks, different post-training recipes, but the forward pass is mostly the same. Reading [Attention is All You Need](https://arxiv.org/abs/1706.03762) (2017) now, almost everything outside the attention call has been replaced.
+
+I think that's the surprising bit. Architectures in most fields that are monetarily this large are more diverged. This post is the catalogue of the *non-attention* swaps and why each one stuck. Attention itself is its own zoo (linear, sliding-window, MLA, GQA, MoE-routed) and gets a separate post. State space models are weirder still and get the post after that. Today: normalisation, the FFN gate, tokenizers, embeddings, and the structural choice that pulled positional encodings out of the parameter budget.
+
+<Callout tone="insight" title="What this post covers (and what it doesn't)">
+  In: decoder-only winning, RMSNorm, pre-norm vs post-norm, QK-Norm, SwiGLU
+  / GeGLU / ReGLU, tokenizer compression, embedding tying, RoPE as a structural
+  shift. Out: linear attention, MoE routing, MLA, GQA, sliding-window, NTK /
+  YaRN scaling, NoPE, SSMs. Those live in the next two posts.
+</Callout>
+
+## Decoder-only ate the field
+
+Encoder-decoder ([T5](https://arxiv.org/abs/1910.10683) (2019), [BART](https://arxiv.org/abs/1910.13461) (2019)) and encoder-only ([BERT](https://arxiv.org/abs/1810.04805) (2018)) had the lead in 2018-2020. Then [GPT-3](https://arxiv.org/abs/2005.14165) (2020) showed that next-token prediction at scale gives you everything the other two were doing (translation, classification, span infilling) plus open-ended generation. By the time Llama-1 shipped (2023), encoder-only had narrowed to retrieval and embeddings, and encoder-decoder lived mostly in T5 lineages.
+
+Causal LM → seq2seq → MLM → causal LM (with prompts). The forward pass got simpler. Everything else in this post is what filled the space the simplification opened up.
+
+## Normalisation: drop the mean, swap the order, normalise the queries
+
+LayerNorm subtracts the mean, divides by std, applies a learned affine. Roughly $6d$ FLOPs per token. [RMSNorm](https://arxiv.org/abs/1910.07467) (2019) noticed the mean-subtraction step doesn't change the loss curve. Strip it:
+
+$$
+\text{RMSNorm}(x) = \frac{x}{\sqrt{\frac{1}{d}\sum_i x_i^2 + \epsilon}} \odot g.
+$$
+
+Two passes, $\approx 4d$ FLOPs. The argument is, that the next linear layer can re-centre its inputs anyway, so the mean term was always redundant. The empirical part is that quality holds across every replication I've seen. So you save the FLOPs for free.
+
+<ParamPlot
+  compute="arch.rmsVsLayerNorm"
+  title="LayerNorm vs RMSNorm: per-call cost"
+  caption="LayerNorm at 6·d FLOPs/token, RMSNorm at 4·d. The gap opens linearly with sequence length, and you pay it twice per layer in pre-norm."
+  kind="line"
+  xLabel="sequence length (tokens)"
+  yLabel="microseconds per call"
+  params={{ dim: 4096, maxSeq: 8192, tflops: 200, launchUs: 3 }}
+  controls={[
+    { kind: 'slider', param: 'dim', label: 'Hidden dim d', min: 256, max: 16384, step: 256, format: 'int' },
+    { kind: 'slider', param: 'maxSeq', label: 'Max sequence length', min: 512, max: 32768, step: 512, format: 'int' },
+    { kind: 'slider', param: 'tflops', label: 'Device TFLOP/s', min: 10, max: 2000, step: 10, format: 'int' },
+    { kind: 'slider', param: 'launchUs', label: 'Kernel launch (µs)', min: 0, max: 20, step: 0.5, format: 'decimal' },
+  ]}
+  height={300}
+/>
+
+The other normalisation argument is about *order*. The original transformer puts the norm after each residual (post-norm: $x_{l+1} = \text{norm}(x_l + f(x_l))$). [Xiong et al.](https://arxiv.org/abs/2002.04745) (2020) showed that this contracts gradients geometrically with depth, which is why the original paper needed warmup tricks to train at all. Pre-norm ($x_{l+1} = x_l + f(\text{norm}(x_l))$) keeps a clean residual path through depth and trains stably without warmup. Every modern decoder I'm aware of is pre-norm.
+
+<ParamPlot
+  compute="arch.preVsPostNorm"
+  title="Gradient norm through depth: pre-norm vs post-norm"
+  caption="Toy linearisation: post-norm contracts gradients by ~(1+α²)^(-1/2) per block, so ‖∇‖ falls off geometrically with depth. Pre-norm keeps the residual path open. This is why post-norm needed warmup tricks to train at all and pre-norm doesn't."
+  kind="line"
+  xLabel="depth l"
+  yLabel="‖∇‖ (relative)"
+  params={{ depth: 48, residualScale: 1 }}
+  controls={[
+    { kind: 'slider', param: 'depth', label: 'Depth L (layers)', min: 4, max: 128, step: 1, format: 'int', hint: 'Llama-3 8B is 32; 70B is 80' },
+    { kind: 'slider', param: 'residualScale', label: 'Residual scale α', min: 0.1, max: 2, step: 0.05, format: 'decimal', hint: 'Bigger α = stronger contraction in post-norm' },
+  ]}
+  height={280}
+/>
+
+The toy is a linearisation, not a real training curve, but the qualitative shape is what the literature shows: post-norm at $L = 48$ has already lost most of its gradient signal. Crank depth up to 128 and the post-norm line touches zero.
+
+The third normalisation move is recent. **QK-Norm** applies an extra RMSNorm to $Q$ and $K$ separately before the attention dot product. The story is empirical: at large scale, $Q \cdot K$ logits drift to magnitudes where softmax saturates, training stalls, and loss curves blow up unpredictably. Normalising each side first keeps the logit distribution well-conditioned. It started showing up in 2020 vision transformer papers, was rediscovered for LLM stability in 2024, and is now standard in Llama-3, Gemma 3, Qwen3, and most frontier open releases. It costs almost nothing and removes a class of training instabilities. I think that's a good trade. Stanford's [CS336 lecture](https://www.youtube.com/watch?v=ptFiH_bHnJw) walks through QK-Norm at 1:10:25 if you want the video version.
+
+## SwiGLU and the GLU family
+
+The FFN block in GPT-2 is two linears with a pointwise nonlinearity:
+
+$$
+\text{FFN}(x) = W_{\text{out}} \, \text{GELU}(W_{\text{in}} x).
+$$
+
+[GLU Variants](https://arxiv.org/abs/2002.05202) (2020) replaced the pointwise step with a *gated* unit:
+
+$$
+\text{SwiGLU}(x) = W_{\text{out}} \, \bigl( \text{swish}(W_1 x) \odot (W_2 x) \bigr),
+$$
+
+with $\text{swish}(z) = z \cdot \sigma(z)$. The same paper introduced GeGLU (gelu-gated) and ReGLU (relu-gated). [PaLM](https://arxiv.org/abs/2204.02311) (2022) was the first big training run to ship SwiGLU, and Llama-1 brought it to the first widely used open model. To match parameter count with the non-gated baseline you shrink the inner width by $2/3$, so the compute is roughly $1.5\times$ a plain FFN per token.
+
+<ParamPlot
+  compute="arch.gluVariants"
+  title="SwiGLU, GeGLU, ReGLU on a 1D slice"
+  caption="Same gate template, three different activations on the gate branch. The family agrees almost everywhere. The activation choice is a small effect; the gate is what matters."
+  kind="line"
+  xLabel="x"
+  yLabel="output"
+  params={{ w1: 1.2, w2: 0.8, range: 4 }}
+  controls={[
+    { kind: 'slider', param: 'w1', label: 'gate weight w₁', min: -3, max: 3, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'w2', label: 'value weight w₂', min: -3, max: 3, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'range', label: 'x range', min: 1, max: 8, step: 1, format: 'int' },
+  ]}
+  height={280}
+/>
+
+The three curves overlap most places. SwiGLU and GeGLU are almost indistinguishable on this slice (swish and gelu are similar smooth approximations to relu). ReGLU sits a hair below them with a sharper kink at the gate's zero crossing. The real loss-per-parameter ranking from the paper has SwiGLU ≈ GeGLU > ReGLU, but the gap between any of these and a plain ReLU FFN is much larger than the gap between them. *The gate carves shapes a pointwise nonlinearity can't.* I think that's the actual win, and the activation choice on the gate branch is mostly a footnote.
+
+<Callout tone="warn" title="Gating isn't free at matched parameters">
+  SwiGLU adds a third matmul (the value branch). At matched parameter count
+  with the inner-width $2/3$ trick, the compute is close to a wash; the quality
+  improvement is what you keep. At matched compute (same inner width as a plain
+  FFN), you're paying ~1.5× and the win is bigger but partly bought. Most open
+  models match parameters, not compute.
+</Callout>
+
+## Tokenizer: BPE → SentencePiece → byte-BPE, vocab climbing
+
+The tokenizer story shorter than the FFN story. [BPE](https://arxiv.org/abs/1508.07909) (2015) became the default early. [SentencePiece](https://arxiv.org/abs/1808.06226) (2018) added Unigram and language-agnostic byte handling. Modern OpenAI/Anthropic-lineage tokenizers (cl100k\_base, o200k\_base) and Llama-3's 128k tokenizer are byte-BPE variants tuned for code and multilingual coverage. Vocab grew from 32k (Llama-1, Llama-2) to 128k (Llama-3) to ~200k (GPT-4o).
+
+The interesting open question isn't which tokenizer to pick. It's whether tokenizing should exist at all. Byte-level models (no tokenizer, learn directly on UTF-8 bytes) have looked promising on smaller scales but haven't displaced BPE at frontier scale. The bet is open: tokenizers buy you context-length efficiency (fewer tokens to represent the same text) at the cost of an extra preprocessing step that doesn't generalise across languages cleanly. Raw bytes feel architecturally cleaner. Whether they win depends on whether someone makes byte-level pretraining cost-competitive at frontier scale. I'm watching that one.
+
+<ParamPlot
+  compute="arch.tokenizerCompression"
+  title="Bytes per token vs vocab size"
+  caption="Heuristic: under a Zipf-distributed unigram with α≈1, expected token length grows like log V. Bytes/token climbs sublinearly with vocab size; the embedding-table parameter share (×10) climbs roughly linearly until total params start dominating. The sweet spot moves as the model grows."
+  kind="line"
+  xLabel="vocab size (k tokens)"
+  yLabel="bytes / token (and embed share × 10)"
+  params={{ vocabK: 128, dim: 4096, totalB: 8, zipfAlpha: 1 }}
+  controls={[
+    { kind: 'slider', param: 'vocabK', label: 'Vocab V (k tokens)', min: 8, max: 256, step: 4, format: 'int', hint: '32 = Llama-1/2; 128 = Llama-3; 200 = GPT-4o' },
+    { kind: 'slider', param: 'dim', label: 'Hidden dim d', min: 512, max: 16384, step: 256, format: 'int' },
+    { kind: 'slider', param: 'totalB', label: 'Total params P (B)', min: 0.5, max: 200, step: 0.5, format: 'decimal' },
+    { kind: 'slider', param: 'zipfAlpha', label: 'Zipf α', min: 0.6, max: 1.6, step: 0.05, format: 'decimal', hint: 'Smaller α = heavier tail = compression saturates earlier' },
+  ]}
+  height={300}
+/>
+
+The compression curve is sublinear in $V$. Doubling the vocab from 32k to 64k buys a meaningful drop in bytes/token; doubling again to 128k buys less; the next doubling to 256k buys almost nothing. There's a knee, and frontier tokenizers sit near it. The embedding-share curve is the other half of the trade. We'll come back to that in a later blogpost once my experiment results land.
+
+## Embedding tying: why "in" and "out" used to be the same job
+
+[Press & Wolf](https://arxiv.org/abs/1608.05859) (2017) noticed something cheap. The input embedding maps token id → vector. The output projection (sometimes called the unembedding or LM head) maps vector → distribution over token ids. Both are $V \times d$ matrices. Why not share weights? They tested it, with great results.
+
+The trick survived for years. GPT-2, GPT-J, Llama-1, Llama-2, Gemma 1/2 small variants all tied. Then frontier scale broke the assumption. [Llama-3](https://arxiv.org/abs/2407.21783) (2024) untied. DeepSeek-V3 untied. Qwen3's small models tie, large models untie. One reading is, that untying the matrices do have a performance benefit with some added parameter count, so for large enough model sizes, this tradeoff is worth it. The more interesting reading is that "in" and "out" aren't quite the same job once you have enough capacity to distinguish them. The input role wants similar tokens to land near each other in vector space; the output role wants the *softmax* to separate them.
+
+<ParamPlot
+  compute="arch.embeddingShare"
+  title="Embedding parameters as a share of total model"
+  caption="Tied (V·d) and untied (2·V·d) embedding-table share, swept over total model size with V=128k and d=4096. At 1B the embedding is a third of the model; at 70B it's a few percent. The economic argument for tying disappears as P grows."
+  kind="line"
+  xLabel="total params P (B)"
+  yLabel="embedding share (%)"
+  params={{ vocabK: 128, dim: 4096, minB: 0.5, maxB: 200 }}
+  controls={[
+    { kind: 'slider', param: 'vocabK', label: 'Vocab V (k tokens)', min: 8, max: 256, step: 4, format: 'int' },
+    { kind: 'slider', param: 'dim', label: 'Hidden dim d', min: 512, max: 16384, step: 256, format: 'int' },
+    { kind: 'slider', param: 'minB', label: 'Min P (B)', min: 0.1, max: 10, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'maxB', label: 'Max P (B)', min: 10, max: 1000, step: 10, format: 'int' },
+  ]}
+  height={280}
+/>
+
+At V=128k, d=4096, P=1B you're spending ~50% of the model on the embedding table if you untie. Tying takes that to 25%. At P=70B the untied share is ~1.5% and tying buys you 0.7%. Below ~7B I'd still tie; above 30B the savings stop mattering and the expressivity argument starts to.
+
+## Position: from a parameter table to a function
+
+GPT-2 stored absolute positions as a learned $L \times d$ table. Two problems. The model couldn't generalise to longer contexts than it saw. And the input was *absolute*, so any "this token is two positions after that one" structure had to be rediscovered by attention from the difference of two arbitrary vectors.
+
+[RoFormer](https://arxiv.org/abs/2104.09864) (2021) made position a *function*. Treat each pair of dimensions in $Q$ and $K$ as a 2D subspace, rotate by $m \cdot \theta_i$ at position $m$, and the attention dot product depends only on the *relative* offset $p - q$. The structural consequence (the one I want for this post) is that the positional table moves out of the parameter budget entirely. RoPE is parameter-free. Its base $b$ is a hyperparameter, and you can dial it after training to push context out without retraining.
+
+GPT-2 → RoPE: position went from "another lookup table the optimiser has to fill" to "a deterministic geometric transform applied at every layer's $Q$, $K$". The deep-dive (NTK-aware scaling, YaRN, NoPE, ALiBi) might live in a future post if I get time to synthesize them in a post. For this post the structural framing is the point: in the modern stack you're not training a position embedding at all.
+
+## A modern block in one list
+
+Here's the list. Every modern open decoder layer looks roughly like this:
+
+1. Residual + RMSNorm (pre-norm)
+2. Attention (deferred to the next post; usually with QK-Norm and RoPE applied to $Q$, $K$)
+3. Residual
+4. Residual + RMSNorm
+5. SwiGLU FFN (two parallel linears into the inner width, swish gate, output projection)
+6. Residual
+
+Outside the block: byte-BPE tokenizer at ~128k vocab, untied embeddings if the model is large, no positional table.
+
+<Callout tone="info" title="The composite edge is small but consistent">
+  None of these swaps is a headline win on its own. RMSNorm saves a few FLOPs;
+  QK-Norm prevents some training failures; SwiGLU is a few percent on loss-per-
+  parameter; tying parameters at small scale is a free saving. Together they
+  push the quality-per-FLOP frontier a few percent. That's not a lot on any
+  given benchmark, but it compounds across every step of training and every
+  token of inference. Nobody publishes the model that gives it back.
+</Callout>
+
+<ParamPlot
+  compute="arch.blockEdge"
+  title="Modern block vs vanilla GPT-2 block: quality per FLOP"
+  caption="Toy composition. Each swap contributes a quality lift and a FLOP delta; the modern block's Q/F ratio separates from the baseline as the dial moves to 1 (full stack). The third dial here is QK-Norm, a closer match to what the late-2024 stack actually ships."
+  kind="line"
+  xLabel="modern-block advantage (0 = vanilla, 1 = full stack)"
+  yLabel="relative quality per FLOP"
+  params={{ swigluLift: 0.04, rmsLift: 0.005, qkNormLift: 0.015, maxScale: 1.5 }}
+  controls={[
+    { kind: 'slider', param: 'swigluLift', label: 'SwiGLU quality lift', min: 0, max: 0.1, step: 0.005, format: 'percent' },
+    { kind: 'slider', param: 'rmsLift', label: 'RMSNorm quality lift', min: 0, max: 0.05, step: 0.002, format: 'percent' },
+    { kind: 'slider', param: 'qkNormLift', label: 'QK-Norm quality lift', min: 0, max: 0.06, step: 0.002, format: 'percent' },
+    { kind: 'slider', param: 'maxScale', label: 'advantage scale', min: 0.5, max: 3, step: 0.1, format: 'decimal' },
+  ]}
+  height={280}
+/>
+
+## Recent launches as data points
+
+Two years of open releases, grouped by which architectural choices they ship. The table is wider than a phone screen by design. Scroll horizontally if you're on mobile.
+
+<div className="overflow-x-auto">
+
+| Model | Year | Norm | FFN | Tokenizer | Position | Embedding |
+| --- | --- | --- | --- | --- | --- | --- |
+| [GPT-2](https://github.com/openai/gpt-2) | 2019 | LayerNorm (post→pre) | GELU | 50k BPE | learned absolute | tied |
+| [GPT-3](https://arxiv.org/abs/2005.14165) | 2020 | LayerNorm (pre) | GELU | 50k BPE | learned absolute | tied |
+| [PaLM](https://arxiv.org/abs/2204.02311) | 2022 | RMSNorm | SwiGLU | 256k SentencePiece | RoPE | untied |
+| [Llama-1](https://arxiv.org/abs/2302.13971) | 2023 | RMSNorm | SwiGLU | 32k SentencePiece | RoPE | tied |
+| [Llama-2](https://arxiv.org/abs/2307.09288) | 2023 | RMSNorm | SwiGLU | 32k SentencePiece | RoPE | tied |
+| [Mistral 7B](https://arxiv.org/abs/2310.06825) | 2023 | RMSNorm | SwiGLU | 32k SentencePiece | RoPE | tied |
+| [Llama-3](https://arxiv.org/abs/2407.21783) | 2024 | RMSNorm | SwiGLU | 128k byte-BPE | RoPE (high base) | untied |
+| [Phi-4](https://arxiv.org/abs/2412.08905) | 2024 | RMSNorm | SwiGLU | tiktoken o200k | RoPE | untied |
+| [DeepSeek-V3](https://arxiv.org/abs/2412.19437) | 2024 | RMSNorm + QK-Norm | SwiGLU (MoE) | 128k byte-BPE | RoPE (decoupled) | untied |
+| [Gemma 3](https://blog.google/technology/developers/gemma-3/) | 2025 | RMSNorm + QK-Norm | GeGLU | 256k SentencePiece | RoPE | tied (small) / untied (large) |
+| [Llama-4](https://ai.meta.com/blog/llama-4-multimodal-intelligence/) | 2025 | RMSNorm + QK-Norm | SwiGLU (MoE) | 128k byte-BPE | RoPE (high base) | untied |
+| [Qwen3](https://qwenlm.github.io/blog/qwen3/) | 2025 | RMSNorm + QK-Norm | SwiGLU | 152k byte-BPE | RoPE | tied (≤4B) / untied (≥7B) |
+
+</div>
+
+The non-attention columns line up fast. Norm: LayerNorm → RMSNorm → RMSNorm + QK-Norm. FFN: GELU → SwiGLU (with GeGLU as a near-equivalent variant). Tokenizer: 32k SentencePiece → 128–256k byte-BPE. Position: learned absolute → RoPE (with rising bases for long context). Embedding: tied → untied past ~7B.
+
+The attention column is the one still in flux. Standard MHA → GQA → MQA → MLA → sliding-window → mixture-of-experts routing → linear attention. That's the topic of the next post.
+
+## What's left for the next two posts
+
+**Attention variants**: [GQA](https://arxiv.org/abs/2305.13245) (2023), MLA in [DeepSeek-V2](https://arxiv.org/abs/2405.04434) (2024), sliding-window in [Mistral](https://arxiv.org/abs/2310.06825) (2023) and [Gemma 3](https://blog.google/technology/developers/gemma-3/), MoE routing as the new dimension every frontier release picks differently. The same-block story falls apart here. The next post is about *why* it does.
+
+**State space models**: [Mamba](https://arxiv.org/abs/2312.00752) (2023) and the SSM-attention hybrids that are showing up in 2025 releases. I think they're the most credible attention-replacement out there, and they're also the most ergonomically different. Worth their own post.
+
+## Check yourself
+
+<Quiz
+  question="A 1B-parameter model with V=128k vocab and d=2048 hidden dim is using tied embeddings. You're considering untying. The non-embedding parameters total ~700M. Which of the following best describes the trade?"
+  choices={[
+    { text: 'Untying adds ~260M parameters (V·d), pushing the model to roughly 1.26B and making the embedding ~40% of the total. The expressivity gain has to justify the size jump.', correct: true },
+    { text: 'Untying is free at this scale; the embedding share is already small.' },
+    { text: 'Untying halves the vocabulary, since you no longer need the same matrix for input and output.' },
+    { text: 'Untying only matters at >70B parameters; below that the parameter share is below 5%.' },
+  ]}
+  explanation="The embedding table is V·d = 128k · 2048 ≈ 260M parameters. Tied: one copy. Untied: two copies, so you add 260M. At 1B total, that's a real fraction of the model (closer to a third of the new size), and the expressivity argument from the frontier (the input and output roles aren't the same job at scale) hasn't kicked in yet. This is exactly why small Qwen3 and Gemma 3 variants still tie, and the larger ones don't."
+/>
+
+It's not just frontier scale, either. [Keller Jordan's modded-nanogpt](https://github.com/KellerJordan/modded-nanogpt) is a hand-tuned GPT-2 speedrun where the goal is just to hit a target validation loss as fast as possible on a small budget. It ships roughly the same block, top to bottom. I find it interesting that a 124M-parameter speedrun repo and a trillion-parameter MoE from DeepSeek, Meta, or Kimi ended up in the same place.
+
+This is amazing in my opinion. Multiple labs, domains, sizes, continents, and they all land on the same block. It probably means we're in a local minimum that's hard to leave (which is its own kind of warning), and I think it also means that if you're starting a project from scratch you should pick this block as your default and only deviate where you have a measurement that justifies it.

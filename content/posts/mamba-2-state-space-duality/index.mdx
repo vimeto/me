@@ -1,0 +1,148 @@
+---
+title: Attention and SSMs are the same matrix
+slug: mamba-2-state-space-duality
+publishedAt: 2026-04-23
+summary: "Mamba-2's headline isn't a new architecture. It's an identity: SSMs and linear attention are two views of the same structured matrix. Once you see it, the 2-8x speedup is a one-line consequence."
+tags:
+  - language-models/architecture/sequence-modeling
+  - language-models/architecture/attention
+  - math/linear-algebra
+status: draft
+---
+
+# Attention and SSMs are the same matrix
+
+The thing that surprised me about [Mamba-2 / SSD](https://arxiv.org/abs/2405.21060) (2024) is that it isn't a new idea. It's an identity. SSMs and linear attention are the same matrix, just different indexing conventions. Once you see the matrix, the 2–8× speedup over [Mamba](https://arxiv.org/abs/2312.00752) (2023)'s selective-scan kernel is a one-line consequence.
+
+S4 (2021) → S4D (2022) → Mamba / selective SSM (Dec 2023) → Mamba-2 / SSD (May 2024) → 2024+ hybrids (Jamba 1.5, Kimi Linear 2025). The first three are "how do we make an SSM that competes with a transformer". Mamba-2 is the one where the authors stopped arguing for SSMs as an alternative and showed that the debate was partly a naming problem. The matrix an SSM builds, when you write it out, is the same matrix linear attention builds. The only question is which kernel you ship.
+
+## The causal mixing matrix
+
+A causal transformer layer takes a sequence $x_1, \dots, x_L$ and produces outputs $y_t$ that are some mix of the earlier tokens. Write the mixing as a matrix $M \in \mathbb{R}^{L \times L}$, lower-triangular, so $y = M x$. Softmax attention picks $M_{tj} = \text{softmax}(q_t^\top k_j / \sqrt{d})$ (row-normalised, dense below the diagonal). Linear attention drops the softmax: $M_{tj} = q_t^\top k_j$.
+
+An SSM does something that looks totally different at first. It runs a recurrence $h_t = A h_{t-1} + B x_t$, $y_t = C h_t$. But unroll it and collect the contribution of $x_j$ to $y_t$:
+
+$$
+M_{tj} = C_t \, A^{t-j} \, B_j \quad \text{for } t \geq j.
+$$
+
+That's the same $L \times L$ matrix, just built from a recurrence instead of from attention scores. The off-diagonal blocks of this matrix have a specific low-rank structure: for any two disjoint intervals $[a, b]$ and $[c, d]$ with $b < c$, the block $M_{[c:d], [a:b]}$ factors as $(\text{stuff for the right block}) \cdot A^{c-b} \cdot (\text{stuff for the left block})$. Everything flows through the state, which has dimension $N$. So the block has rank at most $N$, regardless of its size.
+
+Matrices with this property are called **semi-separable**. The first plot just shows you the structure: one row of $M$ in log magnitude, and the rank bound sitting flat underneath.
+
+<ParamPlot
+  compute="ssd.semiSeparable"
+  title="The sequence-mixing matrix is semi-separable"
+  caption="One row of |M_{L-1,j}| on a log scale, with a flat reference line at log10(N). The plot doesn't compute a numerical block rank — the flat line is the structural bound the semi-separable property guarantees, shown next to the actual magnitude decay."
+  kind="line"
+  xLabel="column j"
+  yLabel="log10 magnitude / log10 rank bound"
+  params={{ N: 8, L: 128, decay: 0.92 }}
+  controls={[
+    { kind: 'slider', param: 'N', label: 'State dim N', min: 1, max: 64, step: 1, format: 'int', hint: 'Mamba-2 uses N = 64–128 per head' },
+    { kind: 'slider', param: 'L', label: 'Sequence length L', min: 16, max: 512, step: 8, format: 'int' },
+    { kind: 'slider', param: 'decay', label: 'Decay a', min: 0.5, max: 0.999, step: 0.005, format: 'decimal', hint: 'Per-channel rates fan out around this' },
+  ]}
+  height={280}
+/>
+
+That's the whole structural claim. Semi-separable matrices have a fast parameterisation: $O(LN)$ numbers describe the whole $L \times L$ matrix, and you can multiply by one in $O(LN)$ time via the recurrence or in $O(L^2 / C \cdot N)$ time via a block decomposition where $C$ is the chunk size. The recurrence is the SSM view. The block decomposition is what SSD ships.
+
+## The identity made interactive
+
+If SSMs and linear attention really are the same matrix, you should be able to compute $y = Mx$ either way and get the same answer to machine precision. The second plot does exactly that. Build a toy SSM with state dim $N$, sequence length $L$, random input. Compute $y$ (a) by running the recurrence and (b) by materialising $M$ and doing the matmul. Plot the log absolute difference per position.
+
+<ParamPlot
+  compute="ssd.dualityCheck"
+  title="Recurrence and matmul agree to machine precision"
+  caption="Per-position log10 |y_recurrence − y_matmul|. The line hugs log10(ε) ≈ −16 regardless of N or L. Both paths are computing the same linear map through the same semi-separable M."
+  kind="line"
+  xLabel="position t"
+  yLabel="log10 |Δy|"
+  params={{ N: 4, L: 128, noise: 1, decay: 0.9 }}
+  controls={[
+    { kind: 'slider', param: 'N', label: 'State dim N', min: 1, max: 32, step: 1, format: 'int' },
+    { kind: 'slider', param: 'L', label: 'Sequence length L', min: 16, max: 512, step: 8, format: 'int' },
+    { kind: 'slider', param: 'decay', label: 'Decay a', min: 0.5, max: 0.999, step: 0.005, format: 'decimal' },
+    { kind: 'slider', param: 'noise', label: 'Input noise', min: 0.05, max: 4, step: 0.05, format: 'decimal', hint: 'Same answer at any scale — the map is linear' },
+  ]}
+  height={260}
+/>
+
+The curve sits on machine epsilon. Noise scales out (both sides of a linear map eat it identically). $N$ and $L$ are free parameters. This is the identity, not a metaphor for the identity. If you slide $N$ up you're adding rank to $M$; if you slide $L$ up you're making it bigger. The two computations still agree.
+
+<Callout tone="insight" title="Softmax attention breaks semi-separability">
+  Plain softmax attention is not semi-separable. The row-wise normalisation couples every entry in the row to every other entry, and the off-diagonal blocks don't factor through a finite-dimensional state. *Linear* attention drops softmax, gets the factorisation back, and sits inside the same family as SSMs. Mamba-2's paper makes this explicit: the SSD framework covers "structured masked attention", i.e. linear attention with a causal mask whose structure is semi-separable.
+</Callout>
+
+## Where the 2–8× comes from
+
+Once you know $M$ is semi-separable, you get two algorithms for free. The recurrence is $O(LN)$ sequential work. That's great for autoregressive decode (one token at a time, $O(N)$ per step) but terrible for training because it can't fill a GPU (the length dimension is a dep chain). Softmax attention can fill a GPU but costs $O(L^2 d)$ FLOPs and, before [FlashAttention](https://arxiv.org/abs/2205.14135), $O(L^2)$ HBM traffic.
+
+SSD's block decomposition sits between them. Chop the sequence into chunks of size $C$. Inside a chunk, you do a dense $C \times C$ matmul (because the diagonal block of $M$ is small enough to materialise cheaply). Between chunks, you aggregate state once and pass it along (one $N$-dimensional vector per chunk boundary). The arithmetic becomes matmul-heavy and maps onto tensor cores. The paper reports two comparisons on this plot: 2–8× over Mamba-1's selective scan ("naive SSM scan" in the legend) and parity with FlashAttention at 2k tokens, 6× at 16k ("FlashAttention"). The SSD-vs-FlashAttention multiplier shown at the cursor is the second comparison.
+
+<ParamPlot
+  compute="ssd.throughputRoofline"
+  title="Throughput vs sequence length"
+  caption="Four kernels on a roofline model. Softmax attention tanks as L grows (quadratic HBM traffic). FlashAttention recovers most of the loss. Naive SSM scan is latency-bound. SSD matches FlashAttention at short L and wins at long L, where its per-token cost stays roughly flat."
+  kind="line"
+  xLabel="sequence length L"
+  yLabel="tokens/sec (relative)"
+  params={{ N: 64, L: 4096, bandwidthGBs: 3000, peakTflops: 500 }}
+  controls={[
+    { kind: 'slider', param: 'N', label: 'State / head dim', min: 16, max: 256, step: 8, format: 'int', hint: 'Mamba-2 uses N ≈ 64' },
+    { kind: 'slider', param: 'L', label: 'Sequence length L (marker)', min: 512, max: 32768, step: 256, format: 'int' },
+    { kind: 'slider', param: 'bandwidthGBs', label: 'HBM bandwidth (GB/s)', min: 500, max: 8000, step: 100, format: 'int', hint: 'H100 HBM3 ≈ 3350 GB/s' },
+    { kind: 'slider', param: 'peakTflops', label: 'Peak throughput (TFLOP/s)', min: 50, max: 2000, step: 10, format: 'int', hint: 'H100 fp16 ≈ 990 TFLOP/s' },
+  ]}
+  height={300}
+/>
+
+A few things worth trying. Crank $L$ up and watch softmax attention fall off a cliff (that's the $L^2$ term dominating). Pull bandwidth down and FlashAttention suffers more than SSD does (SSD is more compute-bound by construction, because $N$ is big enough to keep the matmul units fed). Slide $N$: at $N = 16$ SSD and FlashAttention are basically on top of each other; at $N = 128$ SSD pulls away because its per-token work scales with $N$ but the memory access pattern doesn't.
+
+<Callout tone="info" title="Two algorithms for one matrix">
+  There are really two algorithms, and you pick by sequence length. Short $L$ → use the quadratic-in-$L$ "attention-like" path (dense matmul on the whole triangle). Long $L$ → use the linear-in-$L$ "SSM-like" path (chunked state passing). Both compute the same matrix. Tri Dao's blog post calls this "having your cake and eating it too", which is almost too accurate.
+</Callout>
+
+## Selectivity survives
+
+[Mamba](https://arxiv.org/abs/2312.00752) (2023)'s contribution was making $A$ and $B$ depend on the input: $A_t$, $B_t$ instead of constants. That's what "selective" means in "selective SSM". It's also what made the parallel scan kernel hard, because a time-varying recurrence doesn't factor as a power of a matrix anymore. The worry before SSD came out was that the matmul reformulation would force everyone back to time-invariant dynamics.
+
+It doesn't. The semi-separable structure survives when $A$ varies with $t$. The blocks still factor through an $N$-dimensional state; the factors just aren't powers of a single matrix anymore. SSD generalises to this case; the kernel gets a little more complex but the asymptotics are unchanged. Selectivity is what lets the state decide, per token, whether to remember or forget, and you can watch it in a toy recurrence.
+
+<ParamPlot
+  compute="ssd.selectiveGating"
+  title="Selective vs non-selective SSM on sparse input"
+  caption="Sparse input spikes plus two recurrences. Non-selective: fixed decay, smears the spikes. Selective (Mamba-style): decay tightens on spikes, loosens on zeros. The state tracks the spikes sharply."
+  kind="line"
+  xLabel="time t"
+  yLabel="state / input"
+  params={{ sparsity: 0.15, selectivity: 0.8, decay: 0.9 }}
+  controls={[
+    { kind: 'slider', param: 'sparsity', label: 'Input spike rate', min: 0.02, max: 0.5, step: 0.01, format: 'percent', hint: 'Fraction of time steps that carry signal' },
+    { kind: 'slider', param: 'selectivity', label: 'Selectivity strength', min: 0, max: 1, step: 0.05, format: 'decimal', hint: '0 = Mamba-2 with constant A; 1 = fully input-dependent' },
+    { kind: 'slider', param: 'decay', label: 'Base decay', min: 0.5, max: 0.999, step: 0.005, format: 'decimal' },
+  ]}
+  height={260}
+/>
+
+Slide `selectivity` from 0 to 1 and the two curves separate. At 0, the selective and non-selective lines coincide (no gating). At 1, the selective state pops up on spikes and collapses on zeros, while the non-selective one exponentially averages everything. The Mamba-2 paper keeps this mechanism and restructures only the kernel; the model behaviour is continuous with Mamba-1.
+
+<Callout tone="aside" title="Hybrid stacks in 2024+">
+  Pure SSM stacks lost ground in 2024–2025 to hybrids that interleave a few softmax-attention layers among many SSM/linear-attention layers. Jamba 1.5 and Kimi Linear 2025 are the representative examples. The SSD identity matters here too: you can share a kernel between the "linear" layers even when their parameterisation comes from different families, because semi-separable is the common structure.
+</Callout>
+
+## Check yourself
+
+<Quiz
+  question="A colleague says Mamba-2 is faster than Mamba-1 because it uses a better parallel scan kernel. What's the more accurate framing?"
+  choices={[
+    { text: 'Mamba-2 replaces the scan with a block decomposition of the semi-separable mixing matrix, so the work is dominated by matmuls that fit tensor cores. The selective scan is not the primitive anymore.', correct: true },
+    { text: 'Mamba-2 is the same algorithm as Mamba-1 with better CUDA tuning.' },
+    { text: 'Mamba-2 drops input-dependent dynamics, which is what made Mamba-1 hard to parallelise.' },
+    { text: 'Mamba-2 uses softmax attention internally; that is why it gets matmul throughput.' },
+  ]}
+  explanation="Mamba-1 ran a selective parallel scan. It was linear in L, input-dependent, and painful to parallelise well on GPUs. Mamba-2 points out that the mixing matrix is semi-separable and exposes a block-matmul algorithm for the same matrix. Selectivity (input-dependent A_t) survives; the primitive underneath is matmul instead of scan. No softmax is introduced; the connection to attention is through linear attention with a causal mask."
+/>
+
+Writing this down changed the way I think about the attention-vs-SSM framing. There isn't one. There's a family of causal mixing matrices, softmax attention sits outside of it (the normalisation breaks the factorisation), and everything inside the family (linear attention, S4, Mamba, Mamba-2) is a choice of how to parameterise the same semi-separable structure and which kernel to ship. Cleaner than I thought, and more useful: once you have the matrix, the algorithm engineering is bounded.

@@ -1,0 +1,175 @@
+---
+title: "State-space models, the edge, and the quiet convergence"
+slug: state-space-models-edge-and-convergence
+publishedAt: 2026-04-10
+summary: "Every time I push a model down to a phone, the KV cache is what kills me first. SSMs are the cleanest answer I've found, and around 2025 the field stopped pretending the SSM-vs-attention split was a competition."
+tags:
+  - language-models/architecture/sequence-modeling
+  - language-models/architecture/attention
+  - language-models/inference/kv-cache
+  - ml-systems/hardware
+status: published
+---
+
+# State-space models, the edge, and the quiet convergence
+
+Every time I push a model down to a phone, the KV cache is what kills me first. I've watched a 4-bit 7B fit happily in 4 GB of RAM and then choke on a 32k chat history because the cache outgrew the weights by 3×. SSMs are the cleanest answer to that I've found, and around mid-2025 the field stopped pretending it was a competition. The "is this a real architecture" debate ended quietly. The answer is "it's a building block now".
+
+This post is the tour I wish I'd had a year ago. What an SSM actually is, why the Mamba-2 paper made the SSM-vs-attention split a naming problem, who's actually shipping these things in 2026, and the load-bearing reason I keep reaching for them on edge silicon.
+
+S4 (2021) → S4D (2022) → [Mamba](https://arxiv.org/abs/2312.00752) (Dec 2023) → [Mamba-2 / SSD](https://arxiv.org/abs/2405.21060) (May 2024) → 2024-2026 hybrids → [Mamba-3](https://arxiv.org/abs/2603.15569) (Mar 2026, ICLR).
+
+## The 30-second SSM primer
+
+A causal sequence layer takes inputs $x_1, \dots, x_L$ and produces outputs $y_1, \dots, y_L$ with $y_t$ depending only on $x_{\leq t}$. Attention does this by mixing tokens through a quadratic similarity matrix. An SSM does it through a recurrence on a hidden state.
+
+Pick a state dimension $N$ (small, usually 64 or 128). At each step keep a vector $h_t \in \mathbb{R}^N$. The update is two linear maps:
+
+$$
+h_t = A \, h_{t-1} + B \, x_t, \qquad y_t = C \, h_t.
+$$
+
+$A \in \mathbb{R}^{N \times N}$ controls how the state evolves; $B \in \mathbb{R}^{N \times 1}$ injects the new input; $C \in \mathbb{R}^{1 \times N}$ reads the state into an output. Three matrices, one recurrence, no attention scores.
+
+That's a linear time-invariant system. The first surprise: it's fully expressive over the past. Unroll the recurrence:
+
+$$
+h_t = \sum_{j=1}^{t} A^{t-j} B \, x_j, \qquad y_t = \sum_{j=1}^{t} C \, A^{t-j} B \, x_j.
+$$
+
+So $y_t$ is a weighted sum over all earlier inputs, with weights $C A^{t-j} B$. Stack those weights into a lower-triangular matrix $M$ with $M_{tj} = C A^{t-j} B$ for $t \geq j$, and the whole layer is $y = M x$. A linear map, like attention. The difference is *how* you compute it. Attention materialises $M$ from scores. The SSM never builds $M$; it walks the recurrence and keeps only the $N$-dimensional state.
+
+That's the move. The cost of looking at a 1M-token history is no longer "store 1M keys and values"; it's "carry an $N$-dimensional vector forward". $N$ is small and fixed. The history compresses into the state.
+
+[Mamba](https://arxiv.org/abs/2312.00752) added one more thing: $A$, $B$, $C$ become *input-dependent*. At each step the model picks how much to forget and how much of the input to write into the state, conditioned on $x_t$. That's "selective" in "selective SSM". The mechanism was the missing ingredient — without it, the state can't decide what to ignore, and content-addressed recall is hopeless.
+
+<Callout tone="info" title="Why the state stays small">
+  $N$ is the *state dimension*, not the model dimension. Mamba-2 typically
+  runs $N = 64$ or $128$ per SSM block, regardless of how big the model is.
+  The state cost is bounded; the recurrence is what makes it work. This is
+  the single biggest architectural difference from attention.
+</Callout>
+
+## The Mamba-2 identity, in one paragraph
+
+Once you write an SSM as $y = M x$, a small miracle falls out. The off-diagonal blocks of $M$ all factor through the $N$-dimensional state, so $M$ is **semi-separable** — block rank $\leq N$ regardless of $L$. Linear attention (drop the softmax, keep the $QK^\top$ matmul under a causal mask) lands in the same matrix family. Two communities, same structure. [Mamba-2 / SSD](https://arxiv.org/abs/2405.21060) (2024) makes this an identity: the matrix you build from the SSM recurrence is the matrix linear attention builds from query-key inner products. The 2-8× speedup over Mamba-1's selective scan is then a one-line consequence (matmul-shaped block algorithm vs sequential scan). The point for *this* post is the connection: SSMs and linear attention stopped being two separate research programmes around mid-2024.
+
+## The convergence with linear attention
+
+Once you accept the matrix view, the mid-2020s "linear attention zoo" reads as choices about how to parameterise the same semi-separable structure. [RetNet](https://arxiv.org/abs/2307.08621) (2023) and [GLA](https://arxiv.org/abs/2312.06635) (2023) are gated linear attention. [DeltaNet](https://arxiv.org/abs/2406.06484) (2024) adds an error-correcting update rule (write the new key only after subtracting what the state already predicts). [Gated DeltaNet](https://arxiv.org/abs/2412.06464) (Dec 2024) glues the delta rule to a Mamba-style forget gate and is the bridge paper — it lives equally well in both lineages. [Kimi Linear / KDA](https://arxiv.org/abs/2510.26692) (Oct 2025) gives the gate per-channel resolution, the way Mamba-1 does for selectivity. Different camps, same structural neighbourhood.
+
+The cultures still publish in different venues (the SSM crowd around state-space papers, the linear-attention crowd in attention-as-a-kernel territory) but the math merged. The recurrence and the matmul are two views of the same map, and which one you ship is a kernel decision, not an architecture decision.
+
+## Hybrid stacks: who actually shipped
+
+Pure SSMs win on streaming and lose on exact retrieval. The 2024-2025 wave acknowledged that and stopped trying to beat softmax everywhere — they just kept a small fraction of softmax layers around for the cases where you need them. The lineage:
+
+- [Jamba 1.0](https://arxiv.org/abs/2403.19887) (Mar 2024) — AI21, the proof of concept. First big hybrid Transformer-Mamba; demonstrated the cache savings at production scale.
+- [Codestral Mamba 7B](https://mistral.ai/news/codestral-mamba) (Jul 2024) — Mistral, *pure* Mamba-2 for code, 256k tested. Not a hybrid; a flag-planting "yes, this works".
+- [Falcon Mamba 7B](https://arxiv.org/abs/2410.05355) (Aug-Oct 2024) — TII, pure SSM, beat Llama 3.1 8B at the time. The "pure-SSM is alive" reference.
+- [Jamba 1.5 Mini / Large](https://www.ai21.com/research/jamba-1-5-hybrid-transformer-mamba-models-at-scale/) (Aug 2024) — hybrid + MoE at 398B total. The first time I saw a hybrid stack at frontier scale.
+- [Zamba2](https://www.zyphra.com/post/zamba2-small) (late 2024) — Zyphra, Mamba-2 backbone with shared attention layers. Weight-tying the attention is a clever frequency move.
+- Bamba (IBM Research, 2025) — early hybrid prototype that fed Granite 4.
+- [Qwen3-Next](https://blog.vllm.ai/2025/09/11/qwen3-next.html) (Sep 2025) — Alibaba, 3:1 Gated DeltaNet ↔ full attention.
+- Kimi Linear (Oct 2025) — Moonshot, KDA + MLA at 3:1, first linear-hybrid to beat full attention on like-for-like comparisons.
+- [IBM Granite 4.0](https://www.ibm.com/new/announcements/ibm-granite-4-0-hyper-efficient-high-performance-hybrid-models) (Oct 2025) — 9:1 Mamba-2 ↔ transformer. IBM claims a 70% RAM cut at long context. First ISO 42001 open weights, which matters for enterprise.
+
+The two ratios are worth staring at. Granite 4 picked **9:1** Mamba-to-attention. Kimi picked **3:1** linear-to-MLA. Same family of architecture, same intuition (hybrid > pure), but Granite optimised aggressively for cache savings and Kimi for quality on long-context retrieval. The knee depends on what you're paying attention to.
+
+<ParamPlot
+  compute="ssm.hybridRatioSweep"
+  title="Hybrid ratio sweep: cache savings vs recall surrogate"
+  caption="Sweep Mamba-2 : softmax-attention layer ratio. Cache savings curve is exact (under the model shape); recall surrogate is a sigmoid that drops once the global-attention share gets vanishing. The named picks (3:1 Kimi, 9:1 Granite) sit on opposite sides of the knee."
+  kind="line"
+  xLabel="Mamba-2 : attention ratio"
+  yLabel="normalised score"
+  params={{ modelDim: 4096, layers: 32, headDim: 128, gqaGroup: 8, stateDim: 128, context: 131072, recallPenalty: 0.4, maxRatio: 12 }}
+  controls={[
+    { kind: 'slider', param: 'context', label: 'Context length', min: 8192, max: 1048576, step: 8192, format: 'int', hint: 'Higher context exaggerates the cache savings' },
+    { kind: 'slider', param: 'recallPenalty', label: 'Recall fragility', min: 0, max: 1.5, step: 0.05, format: 'decimal', hint: 'How aggressively recall drops as attention disappears' },
+    { kind: 'slider', param: 'stateDim', label: 'SSM state dim N', min: 16, max: 512, step: 16, format: 'int' },
+    { kind: 'slider', param: 'maxRatio', label: 'Max ratio', min: 4, max: 18, step: 1, format: 'int' },
+  ]}
+  height={300}
+/>
+
+## Why the edge specifically
+
+This is the section the post exists for. Edge inference has three properties that make SSMs nearly ideal:
+
+1. **Memory is small and shared.** A phone has 8 to 12 GB total, and the OS, browser, and other apps want some of it. After a 4-bit 7B sits down with its 4 GB of weights, you have maybe 4 GB left. KV cache eats that fast.
+2. **Bandwidth is tight.** Snapdragon X Elite is 135 GB/s. Apple M4 Max sits at 410-546 GB/s, M3 Ultra at 819 GB/s. Compare H100 SXM at 3.35 TB/s or H200 at 4.8 TB/s. Decode is bandwidth-bound. Edge is two decimal places lower than data-centre, so any factor of 2 cache reduction shows up directly in tokens-per-second.
+3. **Decode is sequential.** Phones don't have the parallelism to hide a long dep chain behind matmul, and they don't run flagship Flash kernels. SSMs are *built* sequential; the recurrence form maps onto NPUs and small GPUs better than tiled attention does.
+
+The cache argument first. Take a 7B-class shape — 4096 model dim, 32 layers, GQA group of 8, bf16 — and look at how the per-sequence cache scales with context for the five sequence-mixing variants worth comparing in 2026:
+
+<ParamPlot
+  compute="ssm.edgeMemoryFootprint"
+  title="Per-sequence memory vs context, 7B-class model"
+  caption="MHA punches through an 8 GB phone budget at modest context. GQA buys an order of magnitude. MLA tilts gentler. Mamba-2 and Gated DeltaNet are essentially flat — their state doesn't grow with T. The hybrid is a flat baseline plus a shallow attention term."
+  kind="line"
+  xLabel="context length T (tokens)"
+  yLabel="cache footprint (GB)"
+  params={{ modelDim: 4096, layers: 32, headDim: 128, gqaGroup: 8, stateDim: 128, hybridRatio: 7, budgetGB: 4, maxContext: 1048576, context: 65536 }}
+  controls={[
+    { kind: 'slider', param: 'modelDim', label: 'Model dim', min: 1024, max: 8192, step: 256, format: 'int' },
+    { kind: 'slider', param: 'layers', label: 'Layers', min: 8, max: 64, step: 1, format: 'int' },
+    { kind: 'slider', param: 'gqaGroup', label: 'GQA group', min: 1, max: 32, step: 1, format: 'int' },
+    { kind: 'slider', param: 'stateDim', label: 'SSM state dim N', min: 16, max: 512, step: 16, format: 'int' },
+    { kind: 'slider', param: 'hybridRatio', label: 'Mamba : attn ratio', min: 1, max: 15, step: 1, format: 'int' },
+    { kind: 'slider', param: 'budgetGB', label: 'Budget after weights (GB)', min: 1, max: 16, step: 0.5, format: 'decimal' },
+    { kind: 'slider', param: 'context', label: 'Marker context', min: 1024, max: 1048576, step: 1024, format: 'int' },
+  ]}
+  height={320}
+/>
+
+At a 64k chat history (where consumer agents already live), MHA on this shape is past 8 GB; GQA with group 8 is still ~1 GB. Mamba-2's state at the same context is **bounded by $d_\text{inner} \cdot N$ regardless of T** — 2 MB-ish. Three orders of magnitude below the GQA cost. The hybrid line sits a hair above pure Mamba-2 because one layer in eight still pays the attention cost; you barely see it on the plot.
+
+That bounded-state property is what turns the bandwidth argument into a latency argument. Decode reads weights plus per-sequence state once per token. On Snapdragon X Elite-class bandwidth (135 GB/s):
+
+<ParamPlot
+  compute="ssm.streamingDecodeLatency"
+  title="Edge decode latency vs context, 7B at 4-bit"
+  caption="ms per token = (weights + cache) / bandwidth. MHA hockey-sticks past 32k. GQA tilts. Mamba-2 and Gated DeltaNet are flat. Slide bandwidth up to ~410 GB/s for M4 Max or 3350 GB/s for H100 — the picture changes shape, but the SSM lines stay flat."
+  kind="line"
+  xLabel="context length T (tokens)"
+  yLabel="ms per token"
+  params={{ modelDim: 4096, layers: 32, headDim: 128, gqaGroup: 8, stateDim: 128, hybridRatio: 7, bandwidthGBs: 135, weightGB: 4, maxContext: 262144 }}
+  controls={[
+    { kind: 'slider', param: 'bandwidthGBs', label: 'Bandwidth (GB/s)', min: 50, max: 3500, step: 25, format: 'int', hint: 'X Elite 135 · M4 Max 410-546 · M3 Ultra 819 · Jetson AGX 205 · H100 3350' },
+    { kind: 'slider', param: 'weightGB', label: 'Weights on bus (GB)', min: 1, max: 14, step: 0.5, format: 'decimal', hint: '4-bit 7B ≈ 4 GB; bf16 7B ≈ 14 GB' },
+    { kind: 'slider', param: 'gqaGroup', label: 'GQA group', min: 1, max: 32, step: 1, format: 'int' },
+    { kind: 'slider', param: 'hybridRatio', label: 'Mamba : attn ratio', min: 1, max: 15, step: 1, format: 'int' },
+    { kind: 'slider', param: 'stateDim', label: 'SSM state dim N', min: 16, max: 512, step: 16, format: 'int' },
+    { kind: 'slider', param: 'maxContext', label: 'Max context (marker)', min: 16384, max: 524288, step: 4096, format: 'int' },
+  ]}
+  height={320}
+/>
+
+At 32k context on X Elite, MHA decodes around 5 tokens/second; the hybrid stays above 30. That is the difference between "unusable" and "feels like a chat". The plot I actually reach for when somebody asks why I bother.
+
+It's not just edge. Server-class inference cares about the same numbers for a different reason: aggregate throughput. If you cut the per-sequence cache by 5-10× you fit more concurrent users on the same H100, the cache-vs-weights ratio flips, and prefill stops being the bottleneck. Granite 4's 70% RAM cut claim is in that frame. The edge case is sharper because the budgets are tighter, but the architectural advantage transfers up the hardware stack.
+
+## Mamba-3
+
+[Mamba-3](https://arxiv.org/abs/2603.15569) (Mar 2026, ICLR 2026) is Tri Dao, Albert Gu, and collaborators going back to inference-first design. Three things changed.
+
+First, the state update goes complex-valued. The original Mamba state is real and decays; on tasks that need *associative recall* (a query and a position interact like a phase), real-valued exponential decay is the wrong primitive. Complex-valued state lets the recurrence carry phase, which is what content-addressed lookup actually wants. The motivating ablations are on retrieval benchmarks where pure SSMs used to lose by a wide margin and now lose by a narrow one.
+
+Second, the kernel rewrite. Mamba-3 ships in [Triton](https://triton-lang.org) and CuTe-DSL, which makes it portable across consumer GPUs and (importantly for me) easier to retarget at NPU back-ends than the original CUDA-only kernels. Inference-first, not training-first. This is the part I care about most for edge.
+
+Third, multi-input parameterisation: the layer can write multiple residual-stream inputs into the same state, which lets a single SSM layer do work that previously needed two. Modest savings on layer count at fixed quality.
+
+I think the framing matters. Mamba-3 isn't trying to beat hybrid stacks (it is mostly intended to slot *into* hybrid stacks). It's the next refinement of the SSM block, with the recall failure mode addressed at the parameterisation level rather than papered over with a softmax interleave. Hybrids will still ship, but the SSM half will get cheaper.
+
+## What's still hard
+
+Pure SSMs still lose on a few patterns. Exact long-range copy. Some forms of in-context learning where the answer is a literal earlier token. Mamba-3's complex-state trick narrows the gap on associative recall but doesn't close it. Hybrids exist precisely *because* of that gap — a few softmax layers paper over the recall holes at low cache cost. The 9:1 vs 3:1 question is just where you'd rather sit on that trade.
+
+The other thing nobody fully solves: training-time long-range stability. Pure SSM stacks at 70B+ are still rarer than transformer stacks at the same scale, and the loss curves take more babysitting (the field hasn't published enough about this, but I've heard the war stories). This is probably temporary; recipes consolidate fast once a few teams ship. But "drop in Mamba-2 and pretrain at 70B" isn't a finished playbook yet.
+
+## What I think now
+
+I came into this thinking SSMs were a niche bet — a research line with two impressive papers and a question mark. I leave thinking they're a building block. The matrix-level merger with linear attention closed the SSM-vs-attention argument; the production releases (Granite, Kimi, Qwen3-Next, Jamba) closed the "but does anyone actually ship this" argument; Mamba-3 closed the "but the recall failure mode" argument. I think that's enough settled to treat SSMs as a normal part of the design space, not a research bet.
+
+For the edge specifically, the bound on state size is the property I'd defend hardest. Bandwidth is two decimal places worse than data-centre, memory is one decimal place worse, and parallelism is two decimal places worse. The architecture that decouples cache cost from context length wins on all three axes simultaneously. That's the property I keep coming back to.

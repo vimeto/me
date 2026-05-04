@@ -30,12 +30,36 @@ export function PostLayout({ meta, children }: Props) {
         </Link>
         <h1 className="text-3xl font-bold leading-tight mb-3">{meta.title}</h1>
         <p className="text-base text-muted-foreground mb-4">{meta.summary}</p>
-        <div className="flex gap-4 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          <img
+            src="/avatar.png"
+            alt=""
+            width={32}
+            height={32}
+            loading="lazy"
+            decoding="async"
+            className="h-8 w-8 rounded-full object-cover bg-muted"
+          />
+          <span className="font-medium text-foreground">Vilhelm Toivonen</span>
+          <span aria-hidden>·</span>
           <time dateTime={meta.publishedAt}>{formatDate(meta.publishedAt)}</time>
-          {meta.category && <span>{meta.category}</span>}
-          {meta.estimatedReadMin && <span>{meta.estimatedReadMin} min read</span>}
+          {meta.category && (
+            <>
+              <span aria-hidden>·</span>
+              <span>{meta.category}</span>
+            </>
+          )}
+          {meta.estimatedReadMin && (
+            <>
+              <span aria-hidden>·</span>
+              <span>{meta.estimatedReadMin} min read</span>
+            </>
+          )}
           {meta.status === 'draft' && (
-            <span className="font-bold uppercase tracking-wide">Draft</span>
+            <>
+              <span aria-hidden>·</span>
+              <span className="font-bold uppercase tracking-wide">Draft</span>
+            </>
           )}
         </div>
       </header>

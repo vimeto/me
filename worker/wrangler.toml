@@ -8,22 +8,28 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "personal-page"
-database_id = "PLACEHOLDER__RUN__wrangler_d1_create"
+database_id = "8533456f-2ed4-4226-9254-a3ce575b05dc"
 migrations_dir = "migrations"
 
 [vars]
 # Non-secret config. Secrets (HAIKU_API_KEY, TURNSTILE_SECRET, etc.) go into
 # the dashboard / `wrangler secret put` and are read off `env` at runtime.
-SITE_ORIGIN = "https://vilhelmtoivonen.com"
-ADMIN_ORIGIN = "https://vilhelmtoivonen.com"
+SITE_ORIGIN = "https://vtoivonen.com"
+ADMIN_ORIGIN = "https://vtoivonen.com"
+
+# Worker route on the production domain. Same-origin /api/* requests from the
+# static site land here.
+[[routes]]
+pattern = "vtoivonen.com/api/*"
+zone_name = "vtoivonen.com"
 
 # Environment-specific overrides.
 [env.preview]
 name = "personal-page-worker-preview"
 
 [env.preview.vars]
-SITE_ORIGIN = "https://preview.vilhelmtoivonen.com"
-ADMIN_ORIGIN = "https://preview.vilhelmtoivonen.com"
+SITE_ORIGIN = "https://preview.vtoivonen.com"
+ADMIN_ORIGIN = "https://preview.vtoivonen.com"
 
 [[env.preview.d1_databases]]
 binding = "DB"

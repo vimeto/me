@@ -21,7 +21,7 @@ type Props = {
   children: (dims: RenderProps) => ReactNode
 }
 
-const defaultMargin: PlotMargin = { top: 16, right: 20, bottom: 36, left: 44 }
+const defaultMargin: PlotMargin = { top: 16, right: 20, bottom: 36, left: 56 }
 
 export function Plot({
   ariaLabel,

@@ -1,0 +1,162 @@
+---
+title: Why softmax creates attention sinks
+slug: attention-sinks-softmax-theorem
+publishedAt: 2026-04-26
+summary: "Attention sinks aren't a transformer quirk; they're a theorem about softmax. If the attention distribution has to sum to 1 and no query strongly matches any key, the model parks the slack somewhere. Change the normalisation and the parking spot disappears."
+tags:
+  - language-models/architecture/attention
+  - language-models/architecture/normalization
+  - language-models/interpretability
+status: draft
+---
+
+# Why softmax creates attention sinks
+
+I filed attention sinks as "a thing StreamingLLM noticed" for years. Turns out it's a theorem about softmax. Whenever the attention distribution has to sum to 1 and no query actually wants to attend strongly to anything, the model parks the slack somewhere. The parking spot is the sink. Change the normalisation and the parking spot disappears.
+
+softmax attention (2017) → [StreamingLLM](https://arxiv.org/abs/2309.17453) (2023, sink discovery as an engineering workaround) → [When Attention Sink Emerges](https://arxiv.org/abs/2410.10781) (ICLR 2025, empirical view: sinks come from softmax's inner dependency, not from layer norm or positional encodings) → [Attention Sinks Are Provably Necessary](https://arxiv.org/abs/2603.11487) (2026, a theorem plus a ReLU counter-example). The last step is the one that reframed it for me. Sinks aren't an artefact of a specific transformer. They're what you get for free with softmax.
+
+## What a sink actually is
+
+Pick any decoder-only transformer. Grab a late-layer attention map. An absurd fraction of the mass lives on the first handful of tokens (often just position 0), even when those tokens are `<bos>` or punctuation with no semantic content. That's the sink. StreamingLLM found it by accident: if you naïvely slide a KV-cache window and drop the first few tokens, perplexity explodes. Keep the initial tokens around and the model is fine out to millions of tokens. Four is the number StreamingLLM uses as its working default.
+
+The ICLR 2025 paper tightened this up. Sinks show up universally across Llama-2, MPT, Falcon, Pythia. They're *not* explained by positional encoding choice, LN placement, FFN design, or head count. Swap softmax for sigmoid attention (no normalisation) and sinks stop emerging (tested up to 1B parameters). That was the empirical hint. The 2026 paper turns it into a proof.
+
+<Callout tone="info" title="The softmax constraint, in one line">
+  softmax(z)ᵢ = exp(zᵢ) / Σⱼ exp(zⱼ). The denominator forces Σᵢ softmax(z)ᵢ = 1, for every input. There's no "I don't want to attend" option. If no key matches, the 1.0 of probability mass still has to go somewhere.
+</Callout>
+
+## Shape of the distribution
+
+The fastest way to see the sink is to plot the distribution itself under four normalisations of the same logits. Generate a synthetic Q·Kᵀ vector with a small positive spike at position 0 and Gaussian noise elsewhere, then pipe it through softmax, softmax with temperature, ReLU-normalised attention (z⁺ / Σ z⁺), and sigmoid (σ(z), no normalisation at all).
+
+<ParamPlot
+  compute="sinks.normalizationShape"
+  title="Attention distribution under four normalisations"
+  caption="Same logits, four normalisations. Softmax concentrates mass on the position-0 spike; ReLU-norm spreads it across positive logits; sigmoid doesn't sum to 1 at all."
+  kind="line"
+  xLabel="position"
+  yLabel="attention mass"
+  params={{ seqLen: 64, outlier: 2, tau: 0.6, noise: 1 }}
+  controls={[
+    { kind: 'slider', param: 'seqLen', label: 'Sequence length', min: 16, max: 256, step: 8, format: 'int' },
+    { kind: 'slider', param: 'outlier', label: 'Outlier magnitude at pos 0', min: 0, max: 6, step: 0.25, format: 'decimal', hint: 'Zero = no spike; softmax still concentrates somewhere' },
+    { kind: 'slider', param: 'tau', label: 'Softmax temperature τ', min: 0.1, max: 2, step: 0.05, format: 'decimal', hint: 'Lower τ = sharper peak' },
+    { kind: 'slider', param: 'noise', label: 'Off-anchor noise σ', min: 0.1, max: 3, step: 0.1, format: 'decimal' },
+  ]}
+  height={300}
+/>
+
+Two things worth pausing on:
+
+- Pull the outlier magnitude down to 0. Softmax *still* doesn't go uniform — any tiny fluctuation in the noise becomes the anchor that mass concentrates on. The distribution hates being flat.
+- ReLU-norm has no opinion about negative logits. Push the outlier negative and the whole position-0 contribution vanishes. That's the "no parking spot" property. Sigmoid is even more relaxed; its total attention mass can be anything between 0 and N.
+
+## The parking-spot mechanism
+
+The clean way to state what's happening: softmax's mass at position 0 rises as the *rest* of the sequence stops looking match-worthy. Fix position 0 at a small positive logit. Sweep the mean logit of positions 1..N.
+
+<ParamPlot
+  compute="sinks.sinkMass"
+  title="Mass at position 0 vs. how well the rest matches"
+  caption="Softmax absorbs slack: when the other positions are uninformative, mass at position 0 rises toward 1. ReLU-norm doesn't — once the other positions are positive, position 0 gets its fair share."
+  kind="line"
+  xLabel="mean logit of positions 1..N-1"
+  yLabel="attention mass at position 0"
+  params={{ seqLen: 64, variance: 1, anchor: 0.5, trials: 32 }}
+  controls={[
+    { kind: 'slider', param: 'seqLen', label: 'Sequence length N', min: 16, max: 256, step: 8, format: 'int' },
+    { kind: 'slider', param: 'variance', label: 'Variance of off-anchor logits', min: 0.1, max: 3, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'anchor', label: 'Anchor logit z₀', min: -1, max: 2, step: 0.1, format: 'decimal', hint: 'Small positive = a "slightly attractive" token' },
+    { kind: 'slider', param: 'trials', label: 'Monte-Carlo trials', min: 4, max: 128, step: 4, format: 'int' },
+  ]}
+  height={300}
+/>
+
+Left side of the sweep, the other positions are actively unattractive (mean logit ≈ -2). Softmax parks nearly all mass on the anchor. Right side, the other positions are genuinely more attractive than the anchor and softmax moves on. ReLU-norm mirrors the transition but bottoms out faster. Sigmoid just tracks σ(z₀), which is constant in this plot because z₀ is fixed. That's the signature.
+
+The "parking spot" framing is load-bearing here. It's not that softmax *likes* the first token. It's that softmax is a probability simplex and simplices need a default state. The 2026 paper phrases this as "normalisation over a probability simplex must force attention to collapse onto a stable anchor to realise a default state" (e.g. when the model needs to ignore the input).
+
+<Callout tone="insight" title="Why the first token specifically">
+  The anchor doesn't have to be position 0. The 2025 paper shows the sink position is determined by the loss function and the data distribution — autoregressive training plus causal masking means every token can attend back to the first one, which makes it the obvious Schelling point. If you prepend a learned "sink token" during pretraining (StreamingLLM tries this), the model will happily park on that instead.
+</Callout>
+
+## The main theorem
+
+The 2026 paper's claim, informally: for the *trigger-conditional* task family (on each input, emit a target output — in the paper's construction, the mean of preceding token representations — if a designated trigger token appears, and a default output otherwise), a softmax attention head provably has at least one position that absorbs a constant fraction of the attention mass, for any input distribution in that family. You can't train it away. You can only move it.
+
+The counter-example that makes the claim bite: **ReLU-normalised attention can solve the same trigger-conditional task without any sink**. Because if all query-key logits are non-positive, z⁺ / Σ z⁺ is zero (well, 0/0; you floor it). There's no sum-to-one constraint to satisfy, so "produce nothing" is in the hypothesis class. Softmax can't express that. It has to dump mass somewhere to satisfy the simplex constraint, and the network learns where to dump it.
+
+<Callout tone="warn" title="What the paper does and doesn't prove">
+  The theorem is specifically about trigger-conditional tasks (single-head and multi-head variants). The paper reports these as a minimal setting where the phenomenon appears; the intuition generalises but the exact constant is tied to that construction. I read this as "softmax forces some concentration whenever the optimal output is sometimes 'ignore the input'", which covers a lot of real language modelling but is weaker than a fully general statement. If you need the exact conditions, go to the paper; this is my rough take.
+</Callout>
+
+## Streaming, from the right angle
+
+Once you see sinks as a softmax tax, StreamingLLM reads differently. The KV-cache is a physical object with a size budget. Naïve sliding-window attention drops the oldest tokens to stay under budget. If the model is softmax-based and has parked its default state on the first few tokens, dropping them is catastrophic: the mass the model wanted to waste somewhere has nowhere to go, it spreads across the in-window tokens, and every logit moves. Keep the first four tokens even when you're a million tokens in and perplexity stays flat.
+
+<ParamPlot
+  compute="sinks.streamingStability"
+  title="Per-position loss with different KV-budget strategies"
+  caption="Softmax with initial tokens retained (flat). Softmax with naïve sliding window drops the sinks and pays a penalty. ReLU attention has no sink to drop."
+  kind="line"
+  xLabel="position in stream"
+  yLabel="loss (nats, surrogate)"
+  params={{ contextLen: 2048, budget: 256, sinkTokens: 4 }}
+  controls={[
+    { kind: 'slider', param: 'contextLen', label: 'Stream length', min: 128, max: 4096, step: 128, format: 'int' },
+    { kind: 'slider', param: 'budget', label: 'KV-cache budget', min: 32, max: 1024, step: 16, format: 'int' },
+    { kind: 'slider', param: 'sinkTokens', label: 'Sink tokens retained', min: 0, max: 16, step: 1, format: 'int', hint: 'StreamingLLM recommends ≈ 4' },
+  ]}
+  height={300}
+/>
+
+The softmax + naïve window curve climbs roughly with log(1 + past/budget). Soft penalty that compounds. ReLU-attention doesn't depend on the anchor and stays flat (this is a surrogate — it ignores the real issue that ReLU-attention would also struggle once a relevant key falls out of the window; the plot is isolating the sink effect only). The StreamingLLM fix is the simplest possible patch: never evict the sink positions.
+
+## Sinks emerge, they aren't initialised
+
+The 2025 paper made one more point that I keep coming back to: sinks don't exist at initialisation. They emerge after enough training on enough data, and they emerge *only* with softmax. A real training loop is too slow to run in a blog plot, so the one below is a closed-form proxy (the attention mass that theory says should concentrate on a fixed anchor under softmax optimisation, vs. what happens under ReLU-norm and sigmoid). The qualitative shape matches the paper's figures.
+
+<ParamPlot
+  compute="sinks.sinkEmergence"
+  title="Attention mass at position 0 over training (proxy)"
+  caption="Softmax (both temperatures) drives mass at the anchor toward 1 with optimisation. ReLU-norm stays at the uniform share. Sigmoid decays toward zero."
+  kind="line"
+  xLabel="training step (proxy)"
+  yLabel="mass at position 0"
+  params={{ steps: 600, datasetSize: 1000, tau: 1, seqLen: 32 }}
+  controls={[
+    { kind: 'slider', param: 'steps', label: 'Training steps', min: 50, max: 4000, step: 50, format: 'int' },
+    { kind: 'slider', param: 'datasetSize', label: 'Dataset size', min: 50, max: 10000, step: 50, format: 'int' },
+    { kind: 'slider', param: 'tau', label: 'Softmax temperature τ', min: 0.3, max: 2, step: 0.1, format: 'decimal', hint: 'Lower τ = faster emergence' },
+    { kind: 'slider', param: 'seqLen', label: 'Sequence length', min: 8, max: 128, step: 4, format: 'int' },
+  ]}
+  height={300}
+/>
+
+Three observations from sliding the knobs. More data makes softmax converge to the sink faster (it's optimisation pressure that drives it, not just depth). Lower temperature also speeds up emergence (sharper softmax, stronger pull toward the anchor). ReLU-norm sits at 1/N throughout; there's nothing to concentrate. Sigmoid drops to zero because its null solution is "all logits negative, all attention mass zero" and gradient descent finds that fine.
+
+The 2025 paper's version of this plot uses real training runs and shows the same qualitative picture. My proxy is there to be played with, not cited.
+
+## So what
+
+If you're serving a pretrained softmax model, you shouldn't fight the sinks. They're baked in and they're doing useful work (they're the model's default state). Keep the first few tokens in your KV cache, prepend a dedicated sink token if you control pretraining, don't drop position 0.
+
+If you're designing a new attention layer, the set of choices looks different now. Sigmoid attention and ReLU-normalised attention both avoid the sink tax, and the 2025 paper reports sigmoid scaling to 1B without them appearing. Whether you *want* a sink is a separate question (the network clearly finds softmax useful, and the ability to "default to ignoring" may be worth the artefact). But it's no longer free.
+
+The part I hadn't internalised before reading the 2026 paper: sinks aren't the price of being a transformer. They're the price of the simplex. Swap the simplex for something else and they go away.
+
+## Check yourself
+
+<Quiz
+  question="You replace softmax with sigmoid attention (σ(z), no normalisation) in a 1B-param language model and pretrain from scratch. Which statement best matches what the ICLR 2025 paper reports?"
+  choices={[
+    { text: 'Attention sinks emerge faster, because sigmoid saturates.' },
+    { text: 'Attention sinks do not emerge up to 1B parameters, because sigmoid has no sum-to-one constraint and no "default-state" pressure.', correct: true },
+    { text: 'Sinks still emerge, just on a different position; the cause is autoregressive masking, not softmax.' },
+    { text: 'Training diverges, because without a probability simplex the loss is ill-defined.' },
+  ]}
+  explanation="Sinks are driven by softmax's sum-to-one constraint: when no key matches, the mass has to go somewhere. Sigmoid attention drops that constraint — σ(z_k) is just a gate on each position, no simplex, no parking spot. The ICLR 2025 paper trains sigmoid attention up to 1B parameters and reports sinks don't appear. (Training does not diverge — sigmoid attention is a perfectly valid inductive bias, just a different one.) The 2026 theorem makes the same point formally with the ReLU counter-example."
+/>
+
+One line to take away: the sink is the shadow of the simplex. Every time you run softmax you're buying it, whether you need it or not.

@@ -1,0 +1,244 @@
+---
+title: Which layers can you afford to quantize?
+slug: which-layers-can-you-afford-to-quantize
+publishedAt: 2026-04-22
+summary: 'Uniform int4 leaves accuracy on the floor. The interesting question is mixed-precision allocation (which layers stay in fp16, which drop to 4 or even 3 bits, and what a bit-budget optimiser actually buys you on the perplexity–bits Pareto curve).'
+tags:
+  - language-models/inference/quantization
+  - ml-systems/hardware
+status: draft
+---
+
+# Which layers can you afford to quantize?
+
+Almost every quantization tutorial I've read ends the same way: pick a bit
+width, run GPTQ or AWQ end-to-end, compare perplexity. The implied model is
+that the network is homogeneous (twiddle one global knob, move along a
+one-dimensional accuracy/size frontier). That's a perfectly fine first
+approximation and a really bad second one.
+
+Layers differ. Attention projections, MLP up-projections, the LM head, the
+first and last blocks all have different weight distributions, different
+activation statistics, and wildly different sensitivity to rounding. If you
+quantize them all at the same width you're over-spending bits on the easy ones
+and under-spending them on the hard ones. The real question is: **given a bit
+budget, where do the bits go?**
+
+<Callout tone="insight" title="Quantization as allocation">
+  Quantization isn't a scalar. It's an allocation problem across layers. The
+  uniform answer is the baseline; mixed precision is the optimisation on top,
+  and it has real teeth (especially below 4 bits average).
+</Callout>
+
+## Uniform quantization is lazy
+
+Uniform int4 is the default because it's easy. One scale, one zero-point per
+tensor (or per channel), one kernel, one story in the release notes. It also
+happens to work surprisingly well down to about 4 bits on most modern LLMs:
+[GPTQ](https://arxiv.org/abs/2210.17323) (2022) and
+[AWQ](https://arxiv.org/abs/2306.00978) (2023) both beat naive round-to-nearest
+by a wide margin while keeping the whole model at one width.
+
+But the reason it works at 4 bits is that 4 bits is generous enough that the
+worst layers still survive. Push the average below 4 and a few layers explode,
+the rest barely notice, and perplexity takes an elbow upward. Those few layers
+are carrying most of the model's representational mass, and you've been
+rounding them as if they were the middle of a residual MLP.
+
+## Layer sensitivity has a fat tail
+
+Here's a notional but reasonable picture of per-layer sensitivity: how much
+end-task loss increases when you add a unit of quantization noise to that
+layer. The shape is the point. A broad U, with the early and late layers
+hardest, plus periodic spikes on attention projections.
+
+<ParamPlot
+  compute="mixedPrec.layerSensitivity"
+  title="Per-layer quantization sensitivity (notional)"
+  caption="Bars: relative sensitivity s_i. Horizontal lines: mean and 'hard-tail' threshold. Bands: contiguous runs of hard-tail layers — these are the ones you pay to keep in fp16."
+  kind="bar"
+  xLabel="layer index"
+  yLabel="sensitivity s_i"
+  params={{ layers: 32, spread: 0.35, seed: 7 }}
+  controls={[
+    { kind: 'slider', param: 'layers', label: 'Layers', min: 8, max: 80, step: 1, format: 'int', hint: 'Transformer depth' },
+    { kind: 'slider', param: 'spread', label: 'Per-layer jitter', min: 0, max: 0.8, step: 0.02, format: 'decimal', hint: 'How heterogeneous is the stack?' },
+    { kind: 'slider', param: 'seed', label: 'Seed', min: 0, max: 32, step: 1, format: 'int' },
+  ]}
+/>
+
+Empirically, when you plot real sensitivity (the Hessian diagonal estimate
+GPTQ uses internally, or the activation outlier norms that
+[SmoothQuant](https://arxiv.org/abs/2211.10438) (2022) leans on, or the
+outlier-feature analysis from [LLM.int8()](https://arxiv.org/abs/2208.07339)
+(2022)), it looks much like this, give or take a few idiosyncratic spikes.
+The tail layers matter more than the count of them would suggest: the top
+10–20% of layers by sensitivity routinely account for more than half the total
+quant error at a fixed uniform width.
+
+<Callout tone="warn" title="Sensitivity vs. error contribution">
+  A layer with sensitivity s_i contributes s_i · 2^(-2b) error at bit width
+  b. That's exponential in b. Losing a bit from a hard layer costs 4× the
+  error it would have cost on an easy layer. Uniform quantization is a
+  failure to charge for this.
+</Callout>
+
+## The bit-budget optimisation
+
+Formalise it. For a network of $N$ layers with sensitivities $\{s_i\}$, the
+toy total quant error is
+
+$$
+E(\mathbf{b}) = \sum_{i=1}^{N} s_i \cdot 2^{-2 b_i},
+$$
+
+where $b_i$ is the bit width assigned to layer $i$. The constraint is an
+average budget, $\frac{1}{N}\sum_i b_i = B$. Minimise $E$ subject to that.
+
+The Lagrangian has a clean solution: at the optimum, the marginal error of
+spending one more bit is the same on every layer. Call that marginal cost
+$\nu$ (a "water level") and the optimum is
+
+$$
+b_i^\star = \tfrac{1}{2} \log_2\!\left(\frac{s_i}{\nu}\right) + \text{const},
+$$
+
+clamped to whatever $[b_{\min}, b_{\max}]$ bounds you have for hardware reasons.
+Binary-search $\nu$ until the constraint holds. The picture looks like pouring
+water over a terrain whose elevation is $-\log_2 s_i$ (hence "water filling").
+This is the solver I reach for in `parameter-golf`, a side project where the
+per-deployment bit allocation matters more than any fancier loss surrogate.
+
+<ParamPlot
+  compute="mixedPrec.bitAllocation"
+  title="Greedy water-filling bit allocation"
+  caption="Per-layer bits at a fixed average budget. Horizontal line: the uniform baseline at the same average. Sensitive layers gain bits; easy layers lose them."
+  kind="bar"
+  xLabel="layer index"
+  yLabel="bits assigned"
+  params={{ layers: 32, targetBits: 4.0, minBits: 2, maxBits: 8, spread: 0.35, seed: 7 }}
+  controls={[
+    { kind: 'slider', param: 'targetBits', label: 'Average bits (budget)', min: 2, max: 8, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'layers', label: 'Layers', min: 8, max: 80, step: 1, format: 'int' },
+    { kind: 'slider', param: 'minBits', label: 'Min bits', min: 1, max: 4, step: 1, format: 'int', hint: 'Hardware floor' },
+    { kind: 'slider', param: 'maxBits', label: 'Max bits', min: 4, max: 16, step: 1, format: 'int', hint: 'Hardware ceiling' },
+    { kind: 'slider', param: 'spread', label: 'Per-layer jitter', min: 0, max: 0.8, step: 0.02, format: 'decimal' },
+  ]}
+/>
+
+The summary under the plot reports the achieved average (it matches the target
+until the clamps bind) and the total-error ratio against the uniform baseline.
+At $B = 4$ you typically see a modest reduction; at $B = 3$ the gap becomes
+large; at $B = 2.5$ it becomes the entire story.
+
+<Callout tone="info" title="Same move as rate-distortion allocation">
+  Water-filling is textbook in source coding: allocate rate to subbands
+  proportional to their variance. Here the "subbands" are layers and the
+  "variances" are sensitivities. The logic survives unchanged: exponential
+  cost in $b$, additive budget in $b$, so logs drop out and the optimum is a
+  simple shift.
+</Callout>
+
+## The perplexity/bits frontier
+
+Uniform-at-average-$B$ is one point. Mixed precision at the same average is
+another. The Pareto curve between them is where the story lives: at high $B$
+they converge; at low $B$ they diverge hard.
+
+A toy relationship that tracks real curves in the interesting regime is
+$\mathrm{ppl}(b) = \mathrm{ppl}_{\text{fp16}} \cdot (1 + \alpha \cdot
+2^{-\beta b})$. Apply it per-layer for the mixed allocation, apply it
+uniformly for the baseline, and read off the gap.
+
+<ParamPlot
+  compute="mixedPrec.pplFrontier"
+  title="Perplexity vs. average bits"
+  caption="Two curves at every average budget: uniform bits and water-filled mixed precision. The horizontal line is fp16 ppl; the vertical line marks the highlighted budget."
+  kind="line"
+  xLabel="average bits / weight"
+  yLabel="perplexity"
+  params={{ pplFp16: 5.6, alpha: 4.5, beta: 1.3, layers: 32, highlightBits: 4.0, spread: 0.35, seed: 7 }}
+  controls={[
+    { kind: 'slider', param: 'highlightBits', label: 'Budget to inspect', min: 2, max: 8, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'alpha', label: 'α (difficulty scale)', min: 1, max: 12, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'beta', label: 'β (bit elasticity)', min: 0.5, max: 3, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'pplFp16', label: 'fp16 ppl', min: 2, max: 20, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'spread', label: 'Per-layer jitter', min: 0, max: 0.8, step: 0.02, format: 'decimal' },
+  ]}
+/>
+
+Some things to try:
+
+1. Slide the highlighted budget 4 bits → 3 bits. The vertical gap between
+   uniform and mixed widens faster than the budget is shrinking, because the
+   uniform curve is already into its elbow.
+2. Crank `spread` up. More heterogeneity means more room for mixed precision
+   to help. If every layer were identical, the two curves would coincide
+   exactly (there's nothing to allocate differently between clones).
+3. Pull `β` down to ~0.6. Now bits don't buy much for anyone; both curves go
+   shallow and the gap nearly closes. "How much does a bit cost?" is really
+   a statement about $β$.
+
+## Hardware constraints aren't neutral
+
+So far everything has been a paper exercise where bits are interchangeable.
+On real GPUs they aren't. INT4 tensor cores are genuinely faster than FP16
+ones (that's the whole point of quantizing), but the moment you mix
+precisions inside a forward pass you pay for conversions: dequant kernels at
+FP16 boundaries, extra memory traffic moving scales around, and (on older
+hardware) compute that won't fuse cleanly into the matmul epilogue.
+
+The dumb model: every layer costs $T_{\text{int4}}$ if it's in INT4 and
+$T_{\text{fp16}}$ if it's in FP16, and every transition between them costs
+$C$. If you interleave FP16 layers randomly among INT4 ones at fraction $f$,
+the expected number of transitions is $\sim 2f(1-f)N$, maximised at $f=0.5$
+(the worst case).
+
+<ParamPlot
+  compute="mixedPrec.hwLatency"
+  title="Toy end-to-end latency vs. FP16 fraction"
+  caption="Two curves: interleaved (FP16 layers scattered through the stack) and clustered (contiguous FP16 block). Horizontal lines are the pure all-INT4 and all-FP16 baselines."
+  kind="line"
+  xLabel="fraction of layers in FP16"
+  yLabel="latency (arbitrary units)"
+  params={{ layers: 32, tInt4: 0.8, tFp16: 2.1, convCost: 0.35 }}
+  controls={[
+    { kind: 'slider', param: 'tInt4', label: 'INT4 layer time', min: 0.1, max: 3, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'tFp16', label: 'FP16 layer time', min: 0.1, max: 6, step: 0.05, format: 'decimal' },
+    { kind: 'slider', param: 'convCost', label: 'Conversion cost / boundary', min: 0, max: 2, step: 0.02, format: 'decimal' },
+    { kind: 'slider', param: 'layers', label: 'Layers', min: 8, max: 80, step: 1, format: 'int' },
+  ]}
+/>
+
+Two takeaways the plot makes concrete:
+
+- At small $f$, the FP16 layers are cheap enough that the conversion tax is
+  dwarfed by the accuracy they buy back. This is the regime the bit-budget
+  optimiser almost always wants to live in.
+- Clustering your FP16 layers (e.g. keeping them all at the ends of the
+  stack) cuts the number of precision transitions to $O(1)$ instead of
+  $O(fN)$. That's often a better real-world strategy than "exactly the
+  top-k by sensitivity, scattered through the stack", even if the latter
+  is what pure water-filling would suggest. In `parameter-golf` I treat this
+  clustering constraint as a first-class term in the objective rather than
+  a post-hoc patch, for exactly this reason.
+
+<Callout tone="aside" title="The clamps carry the decision">
+  In real deployments `maxBits` is often pinned at 8 (16 is a waste if the
+  kernel supports 8) and `minBits` at 3 (INT2 kernels are either hypothetical
+  or much slower). Those two numbers, not the clever middle of the allocator,
+  are what turn a beautiful Pareto curve into a deployable config.
+</Callout>
+
+## Check yourself
+
+<Quiz
+  question="You halve your bit budget from an average of 4 bits/weight to 2 bits/weight. Under the toy model ppl(b) = ppl_fp16 · (1 + α · 2^(-β·b)), what happens to the gap between uniform and optimal mixed-precision?"
+  choices={[
+    { text: 'The gap roughly halves, because the budget halved.' },
+    { text: 'The gap stays about the same (mixed precision is a constant-factor improvement over uniform).' },
+    { text: 'The gap grows: uniform sits on the exponential elbow, while water-filling can spend bits where they cost the most.', correct: true },
+    { text: 'The gap disappears: at very low budgets both allocators collapse to the same min-bits floor on every layer.' },
+  ]}
+  explanation="Per-layer error is exponential in b, so moving one bit from an easy layer to a hard layer is worth more when bits are scarce. At B = 4 the uniform baseline is already near fp16 ppl on most layers, so there's less room to improve. At B = 2 the uniform curve is on its elbow and the hard layers are blowing up, exactly the regime where water-filling's reallocation matters most. Real measurements on GPTQ/AWQ below 4 bits reproduce this asymmetry."
+/>

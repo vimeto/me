@@ -1,0 +1,197 @@
+---
+title: "Attention variants beyond softmax: a 2026 map"
+slug: attention-variants-beyond-softmax
+publishedAt: 2026-04-03
+summary: "A short tour of what open models actually ship in place of full softmax attention in 2025-2026. MLA, linear (lightning), sparse (NSA / DSA), and the hybrid stacks three labs landed on independently. One cache plot, one throughput plot, one Pareto sketch, and the table that names names."
+tags:
+  - language-models/architecture/attention
+  - language-models/inference/kv-cache
+  - language-models/architecture/sequence-modeling
+  - ml-systems/hardware
+status: published
+---
+
+# Attention variants beyond softmax: a 2026 map
+
+A year ago I'd have told you softmax attention was non-negotiable. Swap GQA in for cache, sprinkle some YaRN on top, ship. The 2025 wave of open models quietly disagreed in three different ways. This post is the map I went looking for and couldn't find: linear attention, sparse attention, MLA, and the hybrid stacks, all on the same axes.
+
+The cache problem is what forces this. At 1M tokens, full MHA on an illustrative 48-layer / 32-head / 128-dim stack reads about 800 GB per generated token just to look at history. That's bigger than the model. Everything in this post is a different answer to "fit the cache budget without tanking quality".
+
+## The four moves
+
+You can keep full softmax and **throw tokens away** (sparse). You can keep softmax and **compress what you cache** (MLA). You can **drop softmax** and run a constant-size recurrent state (linear). Or you can **interleave** layers of two kinds (hybrid). Every shipping open model in 2026 is some combination of these four.
+
+One quick caveat. GPT-5, Claude Sonnet 4.5+, and Gemini don't publish their attention internals. The rest of this post is what's verifiable from open weights and papers. The closed frontier might be doing any of the below, or something none of us have thought of.
+
+## The attribution table
+
+<div className="not-prose my-6 overflow-x-auto rounded border-2 border-foreground/15">
+<table className="min-w-[720px] w-full text-sm">
+<thead className="bg-foreground/5">
+<tr className="text-left">
+<th className="px-3 py-2 font-semibold">Model</th>
+<th className="px-3 py-2 font-semibold">Year</th>
+<th className="px-3 py-2 font-semibold">Total / active</th>
+<th className="px-3 py-2 font-semibold">Attention</th>
+<th className="px-3 py-2 font-semibold">Pattern</th>
+<th className="px-3 py-2 font-semibold">Why this choice</th>
+</tr>
+</thead>
+<tbody className="[&_td]:px-3 [&_td]:py-2 [&_td]:align-top [&_tr]:border-t [&_tr]:border-foreground/10">
+<tr><td><a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2</a></td><td>2024</td><td>236B / 21B</td><td>MLA</td><td>every layer</td><td>introduced MLA; ~10× cache cut over MHA</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3</a></td><td>Dec 2024</td><td>671B / 37B</td><td>MLA + DeepSeekMoE</td><td>every layer</td><td>scaled the V2 recipe up</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2512.02556">DeepSeek-V3.2-Exp</a></td><td>Sep 2025</td><td>671B / 37B</td><td>MLA + DSA</td><td>every layer</td><td>per-token top-k selection; O(L²) → O(Lk). <em>Deployed.</em></td></tr>
+<tr><td><a href="https://arxiv.org/abs/2501.08313">MiniMax-01</a></td><td>Jan 2025</td><td>456B / 45.9B</td><td>linear (lightning) + softmax</td><td>hybrid, MoE</td><td>1M train / 4M inference context</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2506.13585">MiniMax-M1</a></td><td>Jun 2025</td><td>—</td><td>linear (lightning) + softmax</td><td>hybrid</td><td>reasoning model on the same kernel mix</td></tr>
+<tr><td>Llama-4 (Scout/Maverick)</td><td>Apr 2025</td><td>MoE</td><td>softmax + iRoPE (3:1)</td><td>hybrid (positional)</td><td>the <em>hybrid</em> here is 3 RoPE-chunked layers per 1 NoPE; not a kernel swap</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2507.20534">Kimi K2</a></td><td>Jul 2025</td><td>1.04T / 32B</td><td>MLA</td><td>every layer</td><td>384 experts, 64 attention heads</td></tr>
+<tr><td>Kimi K2.5 / K2.6</td><td>late 2025 / 2026</td><td>1T / 32B</td><td>MLA</td><td>every layer</td><td>256K context</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2510.26692">Kimi Linear</a></td><td>Oct 2025</td><td>—</td><td>KDA + MLA</td><td>3:1 hybrid</td><td>75% linear, 25% softmax</td></tr>
+<tr><td>Qwen3-Next-80B-A3B</td><td>Sep 2025</td><td>80B / 3B</td><td>Gated DeltaNet + GQA</td><td>3:1 hybrid</td><td>same ratio as Kimi Linear, independent choice. 256K-1M context</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2408.12570">Jamba-1.5-Large</a></td><td>Aug 2024</td><td>398B / 94B</td><td>Mamba + softmax + MoE</td><td>7:1 hybrid</td><td>7 Mamba layers per softmax layer; 256K context</td></tr>
+<tr><td><a href="https://arxiv.org/abs/2502.11089">NSA</a></td><td>Feb 2025</td><td>—</td><td>Native Sparse Attention</td><td>compress + select + sliding</td><td>natively trainable. <em>Research paper, not a shipped model.</em></td></tr>
+</tbody>
+</table>
+</div>
+
+Six families. Three answers. Let me walk them.
+
+## MLA: compress what you keep
+
+Cleanest one to introduce first because it's still a softmax kernel, just over a smaller cached representation. [DeepSeek-V2 / V3](https://arxiv.org/abs/2405.04434) (2024) caches a low-rank latent of dimension $d_c$ (typically ~512) plus a tiny decoupled-RoPE channel. That's roughly a 10–15× reduction over MHA, and it's already enough to make 100K-token serving comfortable on a single GPU. Every Kimi model uses MLA. So does V3.2.
+
+## Linear (lightning) attention
+
+linear attention (2020) → [RetNet](https://arxiv.org/abs/2307.08621) (2023) → [GLA](https://arxiv.org/abs/2312.06635) (2023) → [DeltaNet](https://arxiv.org/abs/2406.06484) (2024) → [Gated DeltaNet](https://arxiv.org/abs/2412.06464) (2024) → KDA / [Kimi Linear](https://arxiv.org/abs/2510.26692) (2025). MiniMax ships its own variant under the brand name lightning attention; it's the same family.
+
+The one-line summary: replace softmax with a kernel feature map, keep a running outer-product state, get O(T) compute and a cache that's *constant in T*. Two things had to land before it actually worked. A delta-rule update (treat the state as an associative memory; write the *error*, not the value), and per-channel forget gating (each dimension picks its own retention timescale). The deep math involves chunked-recurrent kernels and a Diagonal-Plus-Low-Rank state-transition matrix; here, the only thing you need is "cache stops growing".
+
+## Sparse attention
+
+Two designs in this family with very different vintages but the same core move: don't read every key.
+
+- **Sliding window / chunked.** The trivial baseline. Llama-4's RoPE layers cap their window at 8K; GPT-OSS-style chunked attention does the same. Cheap, but it's recall-blind.
+- **[NSA](https://arxiv.org/abs/2502.11089) (Feb 2025).** Hierarchical, three branches: compressed coarse blocks (a summary state), selected fine blocks (the most relevant ones), and a sliding window. Trained natively (not a finetune onto a softmax-pretrained model). Research paper, not yet in a shipped frontier model.
+- **DSA, in [DeepSeek-V3.2-Exp](https://arxiv.org/abs/2512.02556) (Sep 2025).** A small FP8 "lightning indexer" scores every historical key per query, then attention runs only over the top-k. Core attention drops from O(L²) to O(L·k). Shipped.
+
+The pattern: NSA is the design study, DSA is the deployment. Both flatten the cache curve once T crosses the cap.
+
+## The cache plot
+
+This is the figure I went looking for and couldn't find on the same axes anywhere.
+
+<ParamPlot
+  compute="attn.cacheCompare"
+  title="KV-cache footprint vs context length"
+  caption="Seven attention designs on the same 48-layer / 32-head / 128-dim stack. MHA blows the budget, GQA and MLA buy ~10× each, capped sparse (NSA, DSA) flatten once T crosses the cap, linear and the hybrid sit at the floor. Hatched horizontal line is a single-GPU VRAM budget."
+  kind="line"
+  xLabel="context length (tokens)"
+  yLabel="KV cache (GB)"
+  params={{ heads: 32, headDim: 128, layers: 48, gqaGroup: 8, dCompress: 512, dsaTopK: 2048, nsaBlock: 64, nsaSelectBlocks: 16, nsaSlidingWindow: 512, hybridLinearFrac: 0.75, maxContext: 1000000, vramGB: 80 }}
+  controls={[
+    { kind: 'slider', param: 'heads', label: 'Heads h', min: 8, max: 128, step: 1, format: 'int' },
+    { kind: 'slider', param: 'headDim', label: 'Head dim d', min: 64, max: 256, step: 8, format: 'int' },
+    { kind: 'slider', param: 'layers', label: 'Layers L', min: 12, max: 96, step: 1, format: 'int' },
+    { kind: 'slider', param: 'gqaGroup', label: 'GQA group size', min: 1, max: 16, step: 1, format: 'int' },
+    { kind: 'slider', param: 'dCompress', label: 'MLA latent rank d_c', min: 128, max: 1024, step: 32, format: 'int' },
+    { kind: 'slider', param: 'dsaTopK', label: 'DSA top-k', min: 256, max: 8192, step: 128, format: 'int', hint: 'V3.2-Exp uses ~2048' },
+    { kind: 'slider', param: 'nsaSlidingWindow', label: 'NSA window', min: 128, max: 4096, step: 64, format: 'int' },
+    { kind: 'slider', param: 'hybridLinearFrac', label: 'Hybrid linear share', min: 0, max: 0.95, step: 0.05, format: 'percent', hint: '0.75 = 3:1 (Kimi Linear, Qwen3-Next)' },
+    { kind: 'slider', param: 'maxContext', label: 'Max context', min: 65536, max: 2000000, step: 1024, format: 'int' },
+    { kind: 'slider', param: 'vramGB', label: 'VRAM budget (GB)', min: 16, max: 200, step: 4, format: 'int' },
+  ]}
+  height={340}
+/>
+
+What jumps out:
+
+- MHA is off the chart fast. Seven hundred-something GB at 1M.
+- GQA and MLA both bend the curve down by a factor, not a regime. Still linear in T.
+- Linear (lightning) is a flat line at the floor. Constant in T, by construction.
+- DSA-effective and NSA-effective grow with T at first, then flatten once the cap kicks in (top-k for DSA, branch sum for NSA).
+- The 3:1 hybrid is dominated by its 25% MLA share. Three quarters of the layers are flat; one quarter does all the work.
+
+<Callout tone="info" title="Why the hybrid curve has a baseline">
+  A linear-attention layer carries an O(h · d²) state regardless of context.
+  That's the floor. An MLA layer scales linearly in context. In the 3:1 hybrid,
+  three quarters of the stack is flat and one quarter is sloped. The slope is
+  the one that matters at long context, and it's a quarter of pure-MLA's slope.
+</Callout>
+
+## The throughput payoff
+
+Decoding is HBM-bandwidth-bound. Tokens/sec ≈ HBM / (KV(T) + W). Same plot, divided through.
+
+<ParamPlot
+  compute="attn.throughputCompare"
+  title="Decode throughput vs context"
+  caption="Tokens/sec on a memory-bound roofline. Same seven variants. MHA collapses, MLA bends gently, capped-sparse and hybrid stay nearly flat. Move the batch slider to watch the weight term amortise."
+  kind="line"
+  xLabel="context length (tokens)"
+  yLabel="tokens/sec"
+  params={{ heads: 32, headDim: 128, layers: 48, gqaGroup: 8, dCompress: 512, dsaTopK: 2048, nsaBlock: 64, nsaSelectBlocks: 16, nsaSlidingWindow: 512, hybridLinearFrac: 0.75, hbmGBs: 3000, batch: 1, weightGB: 48, maxContext: 1000000 }}
+  controls={[
+    { kind: 'slider', param: 'hbmGBs', label: 'HBM bandwidth (GB/s)', min: 500, max: 5000, step: 50, format: 'int', hint: 'H100 SXM ~3350; A100 ~2000' },
+    { kind: 'slider', param: 'batch', label: 'Batch', min: 1, max: 32, step: 1, format: 'int' },
+    { kind: 'slider', param: 'weightGB', label: 'Active weights (GB)', min: 1, max: 200, step: 1, format: 'int' },
+    { kind: 'slider', param: 'dsaTopK', label: 'DSA top-k', min: 256, max: 8192, step: 128, format: 'int' },
+    { kind: 'slider', param: 'hybridLinearFrac', label: 'Hybrid linear share', min: 0, max: 0.95, step: 0.05, format: 'percent' },
+    { kind: 'slider', param: 'dCompress', label: 'MLA latent rank d_c', min: 128, max: 1024, step: 32, format: 'int' },
+    { kind: 'slider', param: 'maxContext', label: 'Max context', min: 65536, max: 2000000, step: 1024, format: 'int' },
+  ]}
+  height={320}
+/>
+
+Trust the shapes, not the absolute multipliers. The roofline ignores arithmetic and pretends the indexer is free; the real numbers in the V3.2 and Kimi Linear papers are smaller than what this toy shows. Direction is what matters: MHA bends toward zero, the cache-flat variants don't.
+
+## Recall vs throughput, on one chart
+
+The Pareto frontier in 2026 is roughly: pure softmax (best recall, worst cache) → MLA (good recall, ~10× better cache) → DSA / NSA (small recall hit if k is right, much better cache) → hybrid 3:1 (small recall hit, very good cache) → pure linear (recall falls off the cliff).
+
+<ParamPlot
+  compute="attn.recallVsThroughput"
+  title="Pareto frontier at 1M context"
+  caption="One marker per variant. Y-axis is real throughput from the cache math; X-axis is a hand-tuned recall surrogate calibrated to the rough ordering in open NIAH/RULER tables (it is not a measurement). Slide recallSpread to compress or expand the gap."
+  kind="line"
+  xLabel="long-context recall (surrogate)"
+  yLabel="tokens/sec"
+  params={{ heads: 32, headDim: 128, layers: 48, gqaGroup: 8, dCompress: 512, dsaTopK: 2048, nsaBlock: 64, nsaSelectBlocks: 16, nsaSlidingWindow: 512, hybridLinearFrac: 0.75, context: 1000000, hbmGBs: 3000, weightGB: 48, batch: 1, recallSpread: 0.1 }}
+  controls={[
+    { kind: 'slider', param: 'context', label: 'Context', min: 16384, max: 2000000, step: 1024, format: 'int' },
+    { kind: 'slider', param: 'recallSpread', label: 'Recall spread', min: 0, max: 0.4, step: 0.02, format: 'decimal', hint: 'Hand-tuned. Larger = bigger gaps between variants.' },
+    { kind: 'slider', param: 'dsaTopK', label: 'DSA top-k', min: 256, max: 8192, step: 128, format: 'int' },
+    { kind: 'slider', param: 'hybridLinearFrac', label: 'Hybrid linear share', min: 0, max: 0.95, step: 0.05, format: 'percent' },
+    { kind: 'slider', param: 'hbmGBs', label: 'HBM bandwidth (GB/s)', min: 500, max: 5000, step: 50, format: 'int' },
+    { kind: 'slider', param: 'weightGB', label: 'Active weights (GB)', min: 1, max: 200, step: 1, format: 'int' },
+  ]}
+  height={300}
+/>
+
+The recall numbers here are mine, hand-tuned. Treat the ordering as the claim, not the values. The ordering is what most NIAH and RULER tables agree on at this point.
+
+<Callout tone="insight" title="Capped sparsity vs constant linear: a real choice">
+  DSA and pure linear sit on opposite sides of the same trade-off. DSA keeps
+  softmax (so it keeps softmax-quality recall) and pays O(k) per step. Linear
+  drops softmax entirely and pays O(1) per step, but the state has to summarise
+  history and it sometimes can't. The hybrid is the working answer to "I want
+  most of softmax's recall and most of linear's throughput".
+</Callout>
+
+## Why three labs landed on the same ratio
+
+Three labs landed on 3:1 independently. Moonshot's [Kimi Linear](https://arxiv.org/abs/2510.26692). Alibaba's Qwen3-Next-80B-A3B. AI21's Jamba sits at 7:1 with Mamba in place of linear, but the principle is the same: keep enough softmax layers to cover exact-recall queries, drop the rest. I think when independent groups starting from different priors and the same constraints converge on roughly one global-attention layer per four, it's worth treating that as a fixed point of the design space, not an architectural opinion.
+
+A year ago the working assumption was "softmax everywhere, swap GQA in for cache". Two things broke it. Linear attention finally fixed its recall problem (per-channel gating + delta rule), and sparse attention finally became natively trainable (NSA, then deployed as DSA). Hybrid stacks are what the field landed on independently in three places. I think softmax is still the centrepiece — it's just no longer on every layer.
+
+## Check yourself
+
+<Quiz
+  question="At 1M context, which variant has KV cache that is *not* dominated by terms scaling with T?"
+  choices={[
+    { text: 'MHA — all layers cache K and V per token.' },
+    { text: 'GQA — fewer KV heads, but still linear in T.' },
+    { text: 'MLA — latent rank is small but the cache still grows with T.' },
+    { text: 'Linear (lightning) — the recurrent state is h · d · d per layer, constant in T.', correct: true },
+  ]}
+  explanation="Linear-attention layers carry a fixed-size outer-product state per layer. Doubling T doesn't change the cache — it changes the compute used to *build* the state, not the bytes you have to read at decode. MHA, GQA, and MLA all scale linearly in T (with different constants); the hybrid is dominated by its MLA share, which also scales in T but at a quarter the slope of pure MLA. Capped sparse (NSA, DSA) eventually flatten too, but the cap is much higher than the linear floor."
+/>

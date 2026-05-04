@@ -2,7 +2,7 @@ import { getPost, listPosts } from '@/lib/content/posts'
 import type { Post } from '@/schemas/post'
 
 export const SITE = {
-  url: 'https://vilhelmtoivonen.com',
+  url: 'https://vtoivonen.com',
   name: 'Vilhelm Toivonen',
   title: 'Vilhelm Toivonen — AI Researcher',
   description:

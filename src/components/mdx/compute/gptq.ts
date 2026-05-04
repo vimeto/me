@@ -26,30 +26,37 @@ function asNumber(p: ComputeParams, key: string, fallback: number): number {
 /**
  * GPTQ flipping-range curve (teaching version).
  *
- * Intuition: round-to-nearest on a scalar weight w (expressed in grid units)
- * flips to a different grid level when the error-feedback perturbation pushes
- * w across the nearest half-integer boundary. If the perturbation e is
- * approximately Gaussian with std σ (also in grid units), the per-weight flip
- * probability is
+ * Intuition: a bits-bit symmetric quantizer places `levels = 2^bits` grid
+ * points over [-range, range]; round-to-nearest flips a scalar weight w when
+ * an error-feedback perturbation pushes it across the nearest half-step
+ * boundary. With a Gaussian perturbation e ~ N(0, σ²) (σ in the same units
+ * as w), the per-weight flip probability is
  *   p_flip(w) = 2 * (1 - Φ(d(w) / σ))
- * where d(w) is the distance from w to the nearest half-integer boundary.
+ * where d(w) is the distance from w to the nearest inter-level boundary.
  *
- * The "flipping range" is the set {w : p_flip(w) ≥ threshold}.
+ * The "flipping range" is the set {w : p_flip(w) ≥ threshold}. Lowering
+ * bits widens the grid step, so boundaries sit further apart and the teeth
+ * spread out; each tooth still peaks at 1 because p_flip(boundary) = 1
+ * regardless of grid spacing.
  */
 export const gptqFlippingRange: ComputeFn = (params) => {
   const bits = Math.round(asNumber(params, 'bits', 3))
   const sigma = Math.max(1e-4, asNumber(params, 'sigma', 0.25))
   const threshold = Math.min(0.99, Math.max(0.01, asNumber(params, 'threshold', 0.3)))
   const range = Math.max(1, asNumber(params, 'range', 3))
-  const levels = Math.pow(2, bits)
+  const levels = Math.max(2, Math.pow(2, bits))
+  const step = (2 * range) / (levels - 1)
 
   const samples = 321
   const points = []
   let flipRangeCount = 0
   for (let i = 0; i < samples; i++) {
     const w = -range + (2 * range * i) / (samples - 1)
-    const frac = w - Math.floor(w)
-    const d = Math.abs(frac - 0.5)
+    // Grid levels sit at -range + k·step; boundaries halfway between.
+    // Position in grid-step units, shifted so boundaries are at integers + 0.5.
+    const u = (w + range) / step
+    const frac = u - Math.floor(u)
+    const d = Math.abs(frac - 0.5) * step
     const p = Math.min(1, Math.max(0, 2 * (1 - phi(d / sigma))))
     if (p >= threshold) flipRangeCount++
     points.push({ x: w, y: p })
@@ -92,7 +99,8 @@ export const gptqFlippingRange: ComputeFn = (params) => {
     ],
     summary: [
       { label: 'Grid levels', value: String(levels) },
-      { label: 'Noise σ (grid units)', value: sigma.toFixed(3) },
+      { label: 'Grid step Δ', value: step.toFixed(3) },
+      { label: 'σ / Δ', value: (sigma / step).toFixed(2) },
       { label: 'Flipping range', value: `${(flipFraction * 100).toFixed(1)}%` },
     ],
   }

@@ -1,0 +1,142 @@
+---
+title: "Per-user memory in language models: what we tried"
+slug: per-user-memory-composition
+publishedAt: 2026-05-01
+summary: "Serving has a memory problem. Stuffing facts into the prompt is the answer everyone uses because the alternatives didn't work. A field report on three things we tried in my mech-interp PhD work — two clean failures, one architecture that's getting traction, and the layer-injection finding that fell out of all of them."
+tags:
+  - language-models/interpretability
+  - language-models/inference/kv-cache
+  - optimization/low-rank
+category: Notes
+status: published
+estimatedReadMin: 10
+---
+
+# Per-user memory in language models: what we tried
+
+Serving has a memory problem. Every request arrives without a clue who's asking, what their hat colour is, what they prefer their assistant to be called. The cheap answer is to stuff facts into the prompt. It works, and it reads every byte of those facts through the entire stack on every token. At scale you process the same facts thousands of times a day.
+
+The interesting question is whether you can pre-compute a small per-user object — a vector, a row in a bank, a packet of slots — gather $K$ at request time, and have the forward pass behave as if those facts were in the prompt. Three approaches, several months. Two failed cleanly. One is working. Learn-in-public note: the best results stay redacted, the methods are what I want to share. All experiments on Llama-3.2-3B (28 layers, $d_\text{model}=3072$).
+
+## What composition has to mean
+
+Three things have to hold:
+
+1. Pre-compute a per-user object cheaply, once.
+2. Sum or gather $K$ of them, inject the result into a single forward pass.
+3. The model behaves as if those $K$ users' facts had been in the prompt.
+
+Drop (1) and you've reinvented prompting. Drop (2) and you can't multi-tenant. Drop (3) and the whole exercise has no product.
+
+## Approach 1: per-user residual deltas
+
+The cleanest thing to try is a per-user vector you add to the residual stream at one layer. Run the user's facts through the model once, capture the residual at the query position, store $\delta_u = h_B[L] - h_A[L]$ (with-fact minus without-fact, length-matched). At request time, add $\delta_u$ at the same layer.
+
+For a *single* user this works ridiculously well. At $L \geq 23$, $\delta_u$ alone produces 100% greedy-generation recall, transfers across 10 unseen query paraphrases, and works across five fact types. Phase transition is sharp: nothing at $L \leq 20$, lock-in at $L \geq 22$.
+
+Then you try to compose. Naive sum: 57% at $|S|=2$, 9% at $|S|=5$, 0% at $|S|=10$. Six rescue attempts (mean-norm, $\sqrt{|S|}$-norm, bias-centering, pre-query extraction, joint extraction) hit the same wall.
+
+The mechanism is load-bearing geometry. Per-user $\delta_u$s share a strong positive cosine — between 0.55 and 0.70 at the fact-decodable layers. Effective rank (95% energy) saturates at 8 directions in $d_\text{model} = 3072$. Each $\delta_u$ is a small variation on a large *shared* "recall me" bias. Subtracting that bias before summing kills single-user recall too. The bias isn't a bookkeeping artefact, it's part of the signal.
+
+<ParamPlot
+  compute="memcomp.compositionError"
+  title="Composition error vs |S|"
+  caption="Toy of the residual-δ wall. δ_u = bias + per-user direction in an r-dim subspace, unit-renormalised. Naive sum overshoots the bias as |S| grows and aliases per-user directions when |S| > r. Bias-centering removes the bias but takes the user signal with it."
+  kind="line"
+  xLabel="|S| (users summed)"
+  yLabel="‖Σ δ_u − target‖ / ‖target‖"
+  params={{ d: 3072, r: 8, f: 0.6, kMax: 12 }}
+  controls={[
+    { kind: 'slider', param: 'd', label: 'Model width d', min: 256, max: 4096, step: 64, format: 'int' },
+    { kind: 'slider', param: 'r', label: 'Per-user effective rank r', min: 1, max: 32, step: 1, format: 'int', hint: 'Real measurement: rank₉₅ ≈ 8 in d=3072' },
+    { kind: 'slider', param: 'f', label: 'Shared-bias fraction f', min: 0, max: 0.95, step: 0.05, format: 'percent' },
+    { kind: 'slider', param: 'kMax', label: 'Max |S|', min: 4, max: 32, step: 1, format: 'int' },
+  ]}
+  height={280}
+/>
+
+Drop $f$ to zero and the naive sum is fine until $|S| > r$, where the user subspace runs out of room. Crank $f$ up and the error grows linearly with $|S|$ — every extra user pours another copy of the bias into the residual stream. The model reads "$K$ users want to be recalled at full volume" instead of "$K$ users have facts here".
+
+The same wall hits attention-routing KV adapters (per-user $(K, V)$ slot packs prepended at one layer). Best $\lambda$ in the leakage trade-off: 60% recall with 2.3% leakage at $L=18$; pushing injection to $L=22$ traded +8pp recall for +19pp leakage. The shared bias is everywhere these representations live.
+
+A correction while I'm here: I had the impression earlier that *some* fact types composed additively and most didn't. I went back through the experiments — no such result. The fact-type sweep only varied single-user recall layer (entity facts at $L=15$, attributes at $L=21$ – $22$). Useful for layer choice; not a composition result. I had it wrong.
+
+## Approach 2: an addressable memory bank
+
+If a single direction won't compose, give each user their own row in a learned attention bank. Add a parallel attention sublayer at one mid-stack layer with a per-user $(K_\text{bank}, V_\text{bank})$ block, low-rank $Q$ and $O$ projections, base model frozen. The query reads the bank, softmax over $(N \times m)$, weighted value sum, project out, add to the residual stream.
+
+This avoids the shared-bias wall by construction. The bank has its own dedicated $W_q$ projecting into a memory-query space, and the per-user orthogonality the system needs gets trained via the addressable readout. At $n=50$, frozen base, ~1.06 M trainable parameters, 5 kB per user:
+
+- Individual recall **0.78** (text-RAG ceiling 0.73).
+- Cross-user recall **0.74** (ceiling 0.72).
+- Count accuracy **1.00** (text-RAG 0.88).
+- List F1 **0.64** (ceiling 0.73).
+- Null-safety KL **0.010** (gate: 0.05).
+
+Three of four task axes beat text-RAG at roughly 40× compression. List F1 looks architecturally bounded — softmax over $(N, m)$ struggles to emit several concurrent attention peaks for "list everyone whose favourite colour is blue". Sparsemax / top-k attention is the obvious fix.
+
+The interesting part is what stops happening. The KV-adapter wall — anti-leak KL trading recall for leakage 1:1 because both ride on the same shared direction — does not appear here. Toggling the spread loss to zero costs almost nothing on recall: the addressable pathway is doing the orthogonality work itself. This is where I started believing the right framing isn't "edit the model's beliefs" — a known-hard mech-interp wall — but "give the model a side-channel keyed by user ID, train just that, leave the base alone". Different problem; tractable.
+
+Two pieces I can share publicly:
+
+- A **per-user logit-bias vector** ($|V|$-dim, zero-init, ~256 kB/user) lifts top-1 recall noticeably at $n \geq 200$. The bank already gets the gold token to rank 4–7 in a 128k vocabulary; Llama's common-token prior wins #1 at the LM head; the bias nudges past the prior at the head where it actually matters.
+- **Strict per-row gradient masking** at training (every supervised forward sees only the queried user's bank row) gives **isolation recall 0.995** when only the asking user's row is enabled at inference, recall at chance under the counter-mask. Facts genuinely live in one row, which is the privacy property an ACL-aware deployment wants.
+
+## Layer choice does most of the work
+
+Four threads converge on the same picture, and I think this part will outlast whatever architecture we ship.
+
+**Causal tracing tells you where each fact type is decoded.** City facts at $L=15$, color/food/language at $L=21$ – $22$. The two-peak pattern others have reported on entity recall (early input-side, late retrieval) shows up in our sweep too.
+
+**Late injection trades recall for leakage at a bad ratio.** KV-adapter at $\lambda=0.1$: $L=22$ vs $L=18$ buys +8pp recall and +19pp leakage. The gen/leak ratio collapses from 26 to 3.
+
+**Mid-stack is the sweet spot for the bank.** $L=15$ strictly dominates $L=18$ dominates $L=22$ across $n=50, 100, 200$ on every axis except raw recall (where $L=22$ edges $L=18$ by 3pp). At $L=22$ the null-KL is 0.155 — the bank is rewriting unconditional language modelling. Mid-stack writes through to recall circuits without overwriting the final logit readout.
+
+<ParamPlot
+  compute="memcomp.layerInjectionSensitivity"
+  title="Recall and leakage by injection layer"
+  caption="Anchored to mem-attn measurements at n=50: L=15 (ind 0.781, null-KL 0.010), L=18 (0.781, 0.008), L=22 (0.808, 0.155). Smooth interpolation between anchors. Plateau in the middle; null-KL explodes once injection lands within ~6 layers of the unembed."
+  kind="line"
+  xLabel="injection layer L"
+  yLabel="value"
+  params={{ n: 50, showRecall: 1, showLeak: 1 }}
+  controls={[
+    { kind: 'slider', param: 'n', label: 'Users n', min: 50, max: 1000, step: 50, format: 'int', hint: 'Recall scales ~−11pp per doubling of n; layer-shape is roughly invariant' },
+  ]}
+  height={280}
+/>
+
+**Single-layer injection saturates at scale.** At $n=1000$, a single bank at $L=15$ hits a cliff — the residual stream is finite, and 1000 distinct per-user nudges from one write don't all survive 13 downstream layers cleanly. Three independent banks at $\{15, 19, 23\}$, refreshing the signal at three depths, recover roughly +21pp on top-1 recall and 5× on list F1 over the single-bank baseline. (Best $n=1000$ numbers stay redacted; the *shape* of the lift is what matters.)
+
+<ParamPlot
+  compute="memcomp.multiInjectionCompounding"
+  title="Single bank vs three banks at n=1000"
+  caption="Anchored to the n=1000 multi-injection experiment. Single-bank baseline numbers are public; the three-bank lift is the shape of the gain. Specific best-results are redacted pending publication."
+  kind="bar"
+  xLabel="metric"
+  yLabel="score"
+  params={{ blend: 1 }}
+  controls={[
+    { kind: 'slider', param: 'blend', label: 'Single → three banks', min: 0, max: 1, step: 0.05, format: 'percent', hint: 'Drag to see the lift' },
+  ]}
+  height={280}
+/>
+
+The framing I keep coming back to: distance to the unembed matters. Late layers are *too close* to the LM head for any attention gating to filter the injected signal — anything you write there ends up in the unconditional language distribution. Early layers don't yet have enough fact-resolved structure to inject into. Mid-stack ($L=15 \pm 3$ for a 28-layer model) is where downstream layers route the injection through their normal recall circuitry. And one write at one layer isn't enough at scale; you have to refresh twice more on the way up.
+
+I'd defend this part hardest. The bank architecture might evolve. The sparsemax fix might happen, or not. The layer-injection picture — mid-stack write-through, not late-stack overwrite, and you'll need more than one — is geometry, and I think it generalises.
+
+## What's still open
+
+- List F1 around 0.6 looks like a softmax-readout limit; sparsemax / top-k is the focused next experiment.
+- Null safety degrades past $n \approx 200$ on the long-train recipe — higher null-KL coefficient, or a learned gate.
+- The $k>1$ ACL case (multi-user permission masks at inference) needs distractor-mask training; queued.
+- Whether multi-injection compounds linearly with longer training, or shares variance with it.
+
+## Where this leaves me
+
+I came in expecting to be editing the model's beliefs — rewriting weights so it knows new facts about a specific user. That framing has been a known-hard mech-interp wall for a decade, and it's still failing in the experiments above: "make the residual stream remember a fact in a sum-friendly way" hits a shared-bias wall, every rescue lands on the same geometry.
+
+I think the bank works precisely because it doesn't try to solve that problem. The base model isn't being edited. There's a side-channel keyed by user ID, trained on user-specific data, with a clean read-out. Containment, ACL, scaling — those are engineering questions now, not mech-interp ones.
+
+That counts as progress to me, even if it's the kind where you've changed the problem rather than solved it.
