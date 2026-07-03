@@ -53,8 +53,8 @@ I ran the same recipe on three quite different models, and the same recipe did t
 | Qwen3-4B, fine-tuned | 63.6% | 100% | 98% |
 | Qwen3-4B, untouched | 69.6% | 88% | 0% |
 | Gemma-3-4B, fine-tuned | 36.0% | 100% | 98% |
-| Gemma-3-4B, untouched | 74.0% | 96% | (never thinks aloud) |
-| Llama-3.2-3B, fine-tuned | 8.0% | (format only) | (format only) |
+| Gemma-3-4B, untouched | 74.0% | 96% | (doesn't think) |
+| Llama-3.2-3B, fine-tuned | 8.0% | (Finnish, but no answer) | (Finnish, but no answer) |
 | Llama-3.2-3B, untouched | 3.2% | | |
 
 The untouched Qwen row is the one that confused me. Everything runs on a fully Finnish prompt (raw completion, no chat template), and under that prompt a stock model already writes its solution steps in Finnish. The thinking is another story: across 250 test completions, the stock Qwen slipped into a genuine monologue 28 times (the "Okay, let's see… wait…" voice), and all 28 were English. The steps were never the problem. The monologue is.
