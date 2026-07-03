@@ -2,14 +2,12 @@
 title: Quantization from first principles
 slug: quantization-from-first-principles
 publishedAt: 2026-04-22
-summary: "A ground-up tour of the ideas that make int4 serving work: the memory-bandwidth argument, RTN, GPTQ's error feedback, SmoothQuant's activation rescaling, and AWQ's salience protection."
+summary: "I expected quantization to be a pile of tricks. It turned out to be four papers making the same move in different coordinates. A ground-up tour: the memory-bandwidth argument, RTN, GPTQ's error feedback, SmoothQuant's activation rescaling, and AWQ's salience protection."
 tags:
   - language-models/inference/quantization
   - ml-systems/hardware
 status: draft
 ---
-
-# Quantization from first principles
 
 Quantization surprised me. I came in expecting a pile of tricks and left thinking the techniques are straightforward. The math is pretty too. It also helps in both directions: smaller hardware runs bigger models, and bigger hardware runs them faster.
 
@@ -30,7 +28,7 @@ Time to move those bytes over a bus with bandwidth $B$ is $Pb/(8B)$. A 70B model
 <ParamPlot
   compute="quant.memoryMath"
   title="Bandwidth ceiling vs. bit width"
-  caption="Two curves: GB read per token and the implied memory-bound tokens/sec. The knee near 4–5 bits is why int4 is a sweet spot on commodity hardware."
+  caption="GB read per token, and the tokens/sec ceiling it implies. Look for the knee near 4–5 bits: that's the whole case for int4 on commodity hardware."
   kind="line"
   xLabel="bits per weight"
   yLabel="value"
@@ -38,7 +36,7 @@ Time to move those bytes over a bus with bandwidth $B$ is $Pb/(8B)$. A 70B model
   controls={[
     { kind: 'slider', param: 'paramsB', label: 'Model size (B params)', min: 1, max: 200, step: 1, format: 'int', hint: '7, 13, 70, 180 are common points' },
     { kind: 'slider', param: 'bandwidthGBs', label: 'Memory bandwidth (GB/s)', min: 50, max: 4000, step: 50, format: 'int', hint: 'Apple M-series unified memory is ~400 GB/s; H100 HBM3 is ~3350 GB/s' },
-    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 16, step: 1, format: 'int' },
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 16, step: 1, format: 'int', hint: 'Slide 16 → 4 and watch the ceiling quadruple' },
   ]}
   height={280}
 />
@@ -65,7 +63,7 @@ Inside the representable range the error $q(w) - w$ lives in $[-s/2, s/2]$. A sa
 <ParamPlot
   compute="quant.rtnError"
   title="RTN error vs. weight value"
-  caption="Sawtooth is the bounded rounding error inside [-R, R]. Hatched bands show the clipping region, where error grows linearly with |w|."
+  caption="The sawtooth is rounding error, safely bounded by ±s/2. The hatched bands are clipping, where error grows with |w| and never stops. Watch which regime dominates as you move R."
   kind="line"
   xLabel="weight"
   yLabel="q(w) − w"
@@ -105,7 +103,7 @@ The error budget goes where it hurts least. If quantizing $w_i$ overshoots by $r
 <ParamPlot
   compute="quant.gptqFeedback"
   title="Cumulative output error: RTN vs. GPTQ"
-  caption="|Σ r_i| over a left-to-right sweep. RTN's errors accumulate as a random walk (√n growth); GPTQ's feedback makes them telescope, so the line stays bounded by one grid step. ρ controls feedback strength."
+  caption="|Σ r_i| over a left-to-right sweep. RTN drifts upward like the random walk it is (√n); GPTQ's line flattens near one grid step and stays there. That flatness is the telescoping."
   kind="line"
   xLabel="weights quantized"
   yLabel="|Σ residuals|"
@@ -121,7 +119,7 @@ The error budget goes where it hurts least. If quantizing $w_i$ overshoots by $r
 
 This toy doesn't implement a real Hessian. It uses a scalar feedback strength $\rho$ as a stand-in for the OBS update (correct when the inverse Hessian is tridiagonal, i.e. AR(1) coupling). At $\rho = 0$ the two curves overlay: no feedback, nothing for GPTQ to do. Crank $\rho$ toward $1$ and the GPTQ line flattens near one grid step while RTN's random walk keeps drifting. That's the point of error feedback: it *telescopes*. The total output error never accumulates. Drop bits and both curves scale up by the grid step, but the ratio stays in GPTQ's favour.
 
-The real paper uses a Cholesky factorisation of $H^{-1}$ with a lazy-batch update trick, giving per-layer complexity $O(d_{\text{col}}^2 \cdot d_{\text{row}})$ (same order as a forward pass). Headline result: 3–4 bit quantization of OPT-175B and BLOOM-176B with small perplexity regressions. First time it had worked on trillion-parameter models, and the paper that made int3/int4 inference practical outside of demos.
+The real paper uses a Cholesky factorisation of $H^{-1}$ with a lazy-batch update trick, giving per-layer complexity $O(d_{\text{col}}^2 \cdot d_{\text{row}})$ (same order as a forward pass). Headline result: 3–4 bit quantization of OPT-175B and BLOOM-176B with small perplexity regressions. First time it had worked at that scale, and the paper that made int3/int4 inference practical outside of demos.
 
 ## Activation outliers
 
@@ -138,7 +136,7 @@ The matmul result is algebraically unchanged. What shifts is the dynamic range e
 <ParamPlot
   compute="quant.smoothquantRescale"
   title="Effective dynamic range vs. α"
-  caption="Two series: max/median channel magnitude for activations and weights after SmoothQuant migration. The crossover is where both sides fit comfortably on a small grid."
+  caption="Max/median channel magnitude for activations and weights as migration strength grows. The activation curve falls fast, the weight curve rises gently; where they cross, both sides fit on a small grid."
   kind="line"
   xLabel="α (migration strength)"
   yLabel="max / median"
@@ -172,7 +170,7 @@ The argument is empirical and Pareto-flavoured. If salience follows something li
 <ParamPlot
   compute="quant.awqSalience"
   title="Cumulative salience captured vs. protected fraction"
-  caption="The CDF of a Pareto-ish salience distribution. Vertical line is the protected top α%; the horizontal readout is the fraction of total salience captured."
+  caption="The CDF of a Pareto-ish salience distribution. The vertical line is the top α% you protect; the horizontal readout is how much salience that buys. Notice how early the curve does most of its climbing."
   kind="area"
   xLabel="protected channels (%)"
   yLabel="cumulative salience"

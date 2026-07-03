@@ -2,7 +2,7 @@
 title: "Kimi Linear: when hybrid linear attention actually wins"
 slug: kimi-linear-hybrid-attention
 publishedAt: 2026-04-24
-summary: "A close read of Moonshot's Kimi Linear. A 3:1 KDA-to-MLA hybrid cuts KV cache by up to 75% and pushes decoding throughput up to 6× at 1M context, without the recall loss pure linear attention used to eat."
+summary: "Linear attention was the thing you tried when softmax got expensive, then quietly regretted. Kimi Linear made me update: a 3:1 KDA-to-MLA hybrid cuts KV cache by up to 75% and pushes decoding up to 6× at 1M context, without the old recall collapse. A close read of what changed."
 tags:
   - language-models/architecture/attention
   - language-models/inference/kv-cache
@@ -10,24 +10,24 @@ tags:
 status: draft
 ---
 
-# Kimi Linear: when hybrid linear attention actually wins
-
-Linear attention used to be the thing you tried when softmax got expensive, and then quietly regretted. The recall curves were worse, the long-context benchmarks were worse, and the only thing going for it was the scaling story. Every year a new paper promised parity, and every year somebody ran a needle-in-a-haystack and the field went back to softmax.
+Linear attention used to be the thing you tried when softmax got expensive, and then quietly regretted. The recall curves were worse, the long-context benchmarks were worse, and the only thing going for it was the scaling story. Every year a new paper promised parity, and every year somebody ran a needle-in-a-haystack and everyone went back to softmax.
 
 Then I read [Kimi Linear](https://arxiv.org/abs/2510.26692) (2025) and had to update. The folklore ("linear attention loses on recall") is a statement about 2021-era linear attention. [Gated DeltaNet](https://arxiv.org/abs/2412.06464) (2024) and then KDA quietly fixed it, and the cache math on the other side is really clean.
 
 softmax attention (2017) → linear attention (2020) → [RetNet](https://arxiv.org/abs/2307.08621) (2023) → [GLA](https://arxiv.org/abs/2312.06635) (2023) → [DeltaNet](https://arxiv.org/abs/2406.06484) (2024) → Gated DeltaNet (2024) → Kimi Linear / KDA (Oct 2025) → 2026+ wave.
 
-## The cache math nobody talks about
+This is a close read of the paper, not a replication (I haven't run the model). The plots are toys I built to see the shapes, and I'll flag where I'm hand-tuning.
 
-Forget quality for a second. At 1M context, decoding is memory-bound on a KV cache that's become bigger than the model's weights. For MHA on an illustrative 48-layer, 32-head, 128-dim-per-head stack at bf16 (numbers picked to match the plot defaults, not a Kimi Linear spec), you're reading ~800 GB per generated token just to look at history. That doesn't fit on an H100, let alone run fast on one. GQA buys you a group-size factor. In [DeepSeek-V2-style MLA](https://arxiv.org/abs/2405.04434) (2024) the cached state is a low-rank latent plus a tiny decoupled RoPE channel, and that's already a 10–15× win over MHA. Good, but still linear in context. (Kimi Linear's MLA layers actually apply NoPE, not RoPE, so the decoupled-RoPE channel drops out for them — the post's compute keeps a small RoPE channel in the MLA term to match the more common DeepSeek-V2 pattern; it's a second-order effect on the plot shape.)
+## The cache math
+
+Forget quality for a second. At 1M context, decoding is memory-bound on a KV cache that's become bigger than the model's weights. For MHA on an illustrative 48-layer, 32-head, 128-dim-per-head stack at bf16 (numbers picked to match the plot defaults, not a Kimi Linear spec), you're reading ~800 GB per generated token just to look at history. That doesn't fit on an H100, let alone run fast on one. GQA buys you a group-size factor. In [DeepSeek-V2-style MLA](https://arxiv.org/abs/2405.04434) (2024) the cached state is a low-rank latent plus a tiny decoupled RoPE channel, and that's already a 10–15× win over MHA. Good, but still linear in context. (Kimi Linear's MLA layers actually apply NoPE, not RoPE, so the decoupled-RoPE channel drops out for them; my compute keeps a small RoPE channel in the MLA term to match the more common DeepSeek-V2 pattern. Second-order effect on the plot shape.)
 
 The Kimi Linear hybrid uses MLA on only 1 in 4 layers (the paper's 3:1 KDA-to-MLA ratio, confirmed in the abstract-adjacent contributions and in the ablation table). The other three layers carry a KDA recurrent state that's *constant in context*. Stack the two kinds of layers and the cache-vs-context curve goes from a single steep line to a shallow line plus a baseline offset.
 
 <ParamPlot
   compute="kimi.kvCacheVsContext"
   title="KV-cache footprint vs context length"
-  caption="Four attention variants on the same model shape. MHA runs out of room fast; GQA and MLA buy you an order of magnitude each; the KDA+MLA hybrid is a shallow line because only 1 in (ratio+1) layers scales with context. Horizontal band is a typical single-GPU VRAM budget."
+  caption="Four attention variants on the same model shape. MHA runs out of room fast, GQA and MLA each buy an order of magnitude, and the KDA+MLA hybrid stays shallow because only 1 in (ratio+1) layers scales with context. The horizontal band is a typical single-GPU VRAM budget; watch which curves stay under it at 1M."
   kind="line"
   xLabel="context length (tokens)"
   yLabel="KV cache (GB)"
@@ -38,7 +38,7 @@ The Kimi Linear hybrid uses MLA on only 1 in 4 layers (the paper's 3:1 KDA-to-ML
     { kind: 'slider', param: 'layers', label: 'Layers L', min: 12, max: 96, step: 1, format: 'int' },
     { kind: 'slider', param: 'gqaGroup', label: 'GQA group size', min: 1, max: 16, step: 1, format: 'int', hint: 'heads / kv_heads' },
     { kind: 'slider', param: 'dCompress', label: 'MLA latent rank d_c', min: 128, max: 1024, step: 32, format: 'int' },
-    { kind: 'slider', param: 'ratio', label: 'KDA-to-MLA ratio', min: 0, max: 8, step: 1, format: 'int', hint: 'Paper uses 3 (three KDA layers per MLA layer)' },
+    { kind: 'slider', param: 'ratio', label: 'KDA-to-MLA ratio', min: 0, max: 8, step: 1, format: 'int', hint: 'Paper uses 3; try 0 for pure MLA' },
     { kind: 'slider', param: 'maxContext', label: 'Max context', min: 65536, max: 2000000, step: 1024, format: 'int' },
     { kind: 'slider', param: 'vramGB', label: 'VRAM budget (GB)', min: 16, max: 200, step: 4, format: 'int' },
   ]}
@@ -68,7 +68,7 @@ where W is the weight footprint (shared across batch). At 1M context on a 48B-to
 <ParamPlot
   compute="kimi.decodeRoofline"
   title="Decode throughput vs context (memory-bound model)"
-  caption="Each variant's tokens/sec, assuming decode is HBM-bandwidth-limited. MHA and GQA bend hard as context grows; MLA bends more gently; the hybrid is nearly flat. Move the batch slider and watch the weight term amortise."
+  caption="Tokens/sec, assuming decode is HBM-bandwidth-limited. Watch MHA and GQA bend hard as context grows while the hybrid barely moves; MLA sits in between. The gap between the curves is the serving bill."
   kind="line"
   xLabel="context length (tokens)"
   yLabel="tokens/sec"
@@ -109,7 +109,7 @@ where $\alpha_t$ is the vector per-channel gate (KDA) or a scalar (Gated DeltaNe
 <ParamPlot
   compute="kimi.kdaRecurrence"
   title="State-norm trajectory: per-channel vs scalar gating"
-  caption="State-norm over ~120 steps. Inputs turn off at the vertical line; we measure how long the state norm takes to halve. The KDA trace holds onto its kept channels an order of magnitude longer than the scalar-gated Gated DeltaNet trace, at matched average decay."
+  caption="Inputs switch off at the vertical line; from there, watch how long each state takes to halve. The KDA trace holds its kept channels an order of magnitude longer than the scalar-gated Gated DeltaNet trace, at matched average decay."
   kind="line"
   xLabel="step"
   yLabel="‖S_t‖"
@@ -141,14 +141,14 @@ KDA-only is tempting (constant cache, great throughput) but pure-linear models s
 <ParamPlot
   compute="kimi.hybridRatio"
   title="Recall vs throughput as the KDA:MLA ratio sweeps"
-  caption="Normalised decode throughput and a toy long-range-recall surrogate, plotted against KDA-to-MLA ratio. Ratio 0 is pure MLA (best recall, slow). Ratio → ∞ is pure KDA (best throughput, recall falls off). The knee in the surrogate is near 3:1; the paper lands there too."
+  caption="Normalised decode throughput and a toy long-range-recall surrogate, against the KDA-to-MLA ratio. Ratio 0 is pure MLA (best recall, slow); ratio → ∞ is pure KDA (best throughput, recall falls off). Look for the knee where throughput is mostly there and recall hasn't dropped yet: it sits near 3:1, which is where the paper lands too."
   kind="line"
   xLabel="KDA-to-MLA ratio"
   yLabel="normalised"
   params={{ heads: 32, headDim: 128, layers: 48, dCompress: 512, context: 1000000, hbmGBs: 3000, weightGB: 48, recallPenalty: 0.35 }}
   controls={[
     { kind: 'slider', param: 'context', label: 'Context', min: 16384, max: 2000000, step: 1024, format: 'int' },
-    { kind: 'slider', param: 'recallPenalty', label: 'Retention-loss penalty', min: 0, max: 1.5, step: 0.05, format: 'decimal', hint: 'How quickly recall drops as global-attention share shrinks' },
+    { kind: 'slider', param: 'recallPenalty', label: 'Retention-loss penalty', min: 0, max: 1.5, step: 0.05, format: 'decimal', hint: 'Crank it up and watch the knee slide left' },
     { kind: 'slider', param: 'hbmGBs', label: 'HBM bandwidth (GB/s)', min: 500, max: 5000, step: 50, format: 'int' },
     { kind: 'slider', param: 'weightGB', label: 'Active weights (GB)', min: 1, max: 200, step: 1, format: 'int' },
     { kind: 'slider', param: 'dCompress', label: 'MLA latent rank d_c', min: 128, max: 1024, step: 32, format: 'int' },
@@ -156,7 +156,7 @@ KDA-only is tempting (constant cache, great throughput) but pure-linear models s
   height={300}
 />
 
-The recall curve here is a surrogate (my hand-tuned sigmoid, not a measurement). Treat the shape as the claim, not the absolute values. What's load-bearing: throughput rises monotonically in ratio, recall eventually falls off, and the knee where you've captured most of the throughput gain before recall buckles sits near 3–4. Crank `recallPenalty` up and the knee slides left; crank it down and it slides right. The paper's 3:1 is the empirical answer to this same trade-off.
+The recall curve here is a surrogate (my hand-tuned sigmoid, not a measurement). Treat the shape as the claim, not the absolute values. What's load-bearing: throughput rises monotonically in ratio, recall eventually falls off, and the knee where you've captured most of the throughput gain before recall falls sits near 3–4. Crank `recallPenalty` up and the knee slides left; crank it down and it slides right. The paper's 3:1 is the empirical answer to this same trade-off.
 
 <Callout tone="aside" title="Where the 3:1 probably came from">
   I don't think Moonshot swept a 2D grid of ratios. They probably found
@@ -168,7 +168,7 @@ The recall curve here is a surrogate (my hand-tuned sigmoid, not a measurement).
 
 ## What actually changed
 
-If you'd asked me a year ago whether linear attention was going to matter for production LLMs, I would have said "not this decade". That call was wrong. Three things flipped it:
+Before this paper I'd have told you linear attention wasn't going to matter for production LLMs this decade. That call was wrong. Three things flipped it:
 
 - **Per-channel gating.** A boring-sounding change with a large effect. State capacity was never the bottleneck; allocation was.
 - **The delta rule.** Treating the recurrent state as an associative memory with error-correcting updates, rather than as a running average.
@@ -176,7 +176,7 @@ If you'd asked me a year ago whether linear attention was going to matter for pr
 
 Softmax attention isn't going anywhere (the hybrid still uses it, just sparingly). What's gone is the assumption that you need it on every layer. Most tokens most of the time don't want a full quadratic look-back. They want a state that can hold the few things that mattered, plus an occasional global-attention layer to reach across the whole window when it counts.
 
-The cache math on the other side is really clean. That's the part I keep coming back to.
+The recall fix is what got my attention. The cache math is what I keep coming back to. It's pretty.
 
 ## Check yourself
 
@@ -186,7 +186,7 @@ The cache math on the other side is really clean. That's the part I keep coming 
     { text: 'The MLA layers, because each one still stores a context-length latent.', correct: true },
     { text: 'The KDA layers, because their recurrent state grows with context.' },
     { text: 'The decoupled-RoPE key channel, which dominates at long context.' },
-    { text: 'The weights — KV cache is negligible at 1M.' },
+    { text: 'The weights; KV cache is negligible at 1M.' },
   ]}
-  explanation="KDA layers store a recurrent state whose size is independent of context — h · d · d per layer. MLA layers store a low-rank latent plus a small RoPE key per token, so they scale linearly with context. At 1M context, even the MLA layers' shrunken cache dominates the total, which is exactly why the ratio matters: each extra KDA layer you swap in for an MLA layer saves ~1 M · d_c · 2 bytes of cache. The weights are a small fixed cost by comparison (Kimi Linear's 3B active params are ~6 GB at bf16)."
+  explanation="KDA layers store a recurrent state whose size is independent of context (h · d · d per layer). MLA layers store a low-rank latent plus a small RoPE key per token, so they scale linearly with context. At 1M context, even the MLA layers' shrunken cache dominates the total, which is exactly why the ratio matters: each extra KDA layer you swap in for an MLA layer saves ~1 M · d_c · 2 bytes of cache. The weights are a small fixed cost by comparison (Kimi Linear's 3B active params are ~6 GB at bf16)."
 />

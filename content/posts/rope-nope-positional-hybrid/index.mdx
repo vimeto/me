@@ -1,21 +1,19 @@
 ---
-title: RoPE, NoPE, and the positional encoding compromise
+title: Does every layer need to know where it is?
 slug: rope-nope-positional-hybrid
 publishedAt: 2026-04-25
-summary: "The architecture-convergence post ended with RoPE as a function that extrapolates cleanly. The follow-up: well-defined isn't the same as useful. A 2025 Cohere paper shows that the best positional signal isn't uniform across layers."
+summary: "My architecture-convergence post ended with RoPE as the clean winner on the positional axis. Turns out half the layers would rather have no positional signal at all. This is the follow-up I owed: where RoPE's extrapolation actually breaks, why NoPE works, and why mixing them beats both."
 tags:
   - language-models/architecture/positional
   - language-models/architecture/attention
 status: draft
 ---
 
-# RoPE, NoPE, and the positional encoding compromise
-
-The RoPE section in my [architecture-convergence post](/blog/architecture-convergence-swiglu-rmsnorm-rope) ended on a confident note: *rotation is a function, so feeding a larger $m$ is well-defined*. I left it there. Rope-to-Nope is the follow-up I didn't write. *Well-defined* isn't the same as *useful*. It turns out half the layers would rather have no positional signal at all.
+The RoPE section in my [architecture-convergence post](/blog/architecture-convergence-swiglu-rmsnorm-rope) ended on a confident note: rotation is a function, so feeding a larger $m$ is well-defined. I left it there, feeling like the story was finished. It wasn't. Well-defined isn't the same as useful, and it turns out half the layers would rather have no positional signal at all.
 
 sinusoidal (2017) → learned absolute (GPT-2) → relative / T5 bias (2019) → [ALiBi](https://arxiv.org/abs/2108.12409) (2021) → [RoPE](https://arxiv.org/abs/2104.09864) (2021) → [NoPE observation](https://arxiv.org/abs/2305.19466) (2023) → [YaRN](https://arxiv.org/abs/2309.00071) (2023) → [RoPE-to-NoPE hybrid](https://arxiv.org/abs/2501.18795) (2025) → 2026+ (wavelet positions, periodic-extrapolation, …).
 
-Each of those moves fixed a narrow problem with the previous. Sinusoidal couldn't be trained; learned absolute couldn't extrapolate; T5's bucketed relative bias scaled badly; ALiBi had a fixed decay; RoPE gave you a dial. Then NoPE showed up as a quiet shock (a decoder-only transformer with *no positional signal at all* can still learn position from causal masking alone), and YaRN turned RoPE's extrapolation knob into a real long-context recipe. The 2025 Cohere paper is the one that asks the question nobody quite asked out loud: *what if we mixed them*.
+Each of those moves fixed a narrow problem with the previous. Sinusoidal couldn't be trained; learned absolute couldn't extrapolate; T5's bucketed relative bias scaled badly; ALiBi had a fixed decay; RoPE gave you a dial. Then NoPE surprised me (a decoder-only transformer with *no positional signal at all* can still learn position from causal masking alone), and YaRN turned RoPE's extrapolation knob into a real long-context recipe. The 2025 Cohere paper is the first one to just ask: what if we mixed them.
 
 ## Four flavours, one axis
 
@@ -24,14 +22,14 @@ Before the hybrid claim, it's worth sitting with what each scheme does to a sing
 <ParamPlot
   compute="posenc.attnVsOffset"
   title="Mean q·k similarity vs relative offset, four schemes"
-  caption="RoPE rings (sum of cosines at different frequencies). NoPE is flat at 1 (no positional modulation). ALiBi decays linearly. RoPE + QK-Norm is RoPE rescaled into a smaller range. The first-zero line on RoPE is where the high-frequency subspaces have decohered on average."
+  caption="The flat line at 1 is NoPE: from a similarity perspective, there's nothing to plot. RoPE rings (a sum of cosines at different frequencies), ALiBi slides down linearly, and QK-Norm is RoPE squashed into a smaller range. The vertical line on RoPE marks where its high-frequency subspaces have decohered on average."
   kind="line"
   xLabel="relative offset m (tokens)"
   yLabel="mean similarity"
   params={{ dim: 64, base: 10000, alibiSlope: 0.0015, qkNormScale: 0.7, maxOffset: 4096 }}
   controls={[
     { kind: 'slider', param: 'dim', label: 'Head dim', min: 16, max: 256, step: 16, format: 'int' },
-    { kind: 'slider', param: 'base', label: 'RoPE base b', min: 1000, max: 1000000, step: 1000, format: 'int', hint: 'Default 10000; long-context Llama uses 500k–1M' },
+    { kind: 'slider', param: 'base', label: 'RoPE base b', min: 1000, max: 1000000, step: 1000, format: 'int', hint: 'Crank toward 1M (long-context Llama territory) and watch the ring stretch out' },
     { kind: 'slider', param: 'alibiSlope', label: 'ALiBi slope', min: 0, max: 0.01, step: 0.0001, format: 'decimal', hint: 'Per-head slope; smaller = flatter decay' },
     { kind: 'slider', param: 'qkNormScale', label: 'QK-Norm scale', min: 0.2, max: 1, step: 0.05, format: 'decimal' },
     { kind: 'slider', param: 'maxOffset', label: 'Max offset (tokens)', min: 128, max: 16384, step: 128, format: 'int' },
@@ -39,7 +37,7 @@ Before the hybrid claim, it's worth sitting with what each scheme does to a sing
   height={300}
 />
 
-This is a direct generalisation of the `archRopeSimilarity` plot from the earlier post, with the other three schemes overlaid. NoPE being a flat line at 1 is the important visual. It's not that NoPE ignores position; it's that from a *similarity* perspective there is no positional term to plot. Anything NoPE learns about position has to come from the causal mask plus the forward pass itself. ALiBi commits to monotone decay by construction. (ALiBi is technically an additive bias on pre-softmax logits, not a transformation of $q \cdot k$; I'm plotting it on the same axis as the others for visual parity, which is a small abuse worth flagging.) RoPE's ring is what you get when you add up $d/2$ cosines at geometrically-spaced frequencies (low frequencies give long-range coherence, high frequencies drive the short-range wiggle). QK-Norm squashes the range without changing the shape.
+This generalises the RoPE similarity plot from the earlier post, with the other three schemes overlaid. NoPE being a flat line at 1 is the important visual. It's not that NoPE ignores position; it's that from a similarity perspective there is no positional term to plot. Anything NoPE learns about position has to come from the causal mask plus the forward pass itself. ALiBi commits to monotone decay by construction. (ALiBi is technically an additive bias on pre-softmax logits, not a transformation of $q \cdot k$; I'm plotting it on the same axis as the others for visual parity, which is a small abuse worth flagging.) RoPE's ring is what you get when you add up $d/2$ cosines at geometrically-spaced frequencies (low frequencies give long-range coherence, high frequencies drive the short-range wiggle). QK-Norm squashes the range without changing the shape.
 
 <Callout tone="insight" title="Why NoPE works at all in decoder-only models">
   A decoder's causal mask already encodes position indirectly: the token
@@ -51,12 +49,12 @@ This is a direct generalisation of the `archRopeSimilarity` plot from the earlie
 
 ## The extrapolation cliff
 
-The pitch for RoPE has always been that it extrapolates. You rotate by $m \cdot \theta_i$ for any $m$, trained-distribution or not. *Well-defined* is the word I used in the earlier post. But well-defined doesn't mean calibrated: the low-frequency subspaces, at $\theta_i = b^{-2i/d}$ with $b = 10000$ and $d = 128$, have wavelengths around $2\pi \cdot 10000 \approx 63000$ tokens. If you train at $L = 8192$, those subspaces never complete a full rotation during training. At inference past $L_\text{train}$, the model sees phases it has never seen. The output falls off a cliff.
+The pitch for RoPE has always been that it extrapolates. You rotate by $m \cdot \theta_i$ for any $m$, trained-distribution or not. "Well-defined" is the word I used in the earlier post. But well-defined doesn't mean calibrated: the low-frequency subspaces, at $\theta_i = b^{-2i/d}$ with $b = 10000$ and $d = 128$, have wavelengths around $2\pi \cdot 10000 \approx 63000$ tokens. If you train at $L = 8192$, those subspaces never complete a full rotation during training. At inference past $L_\text{train}$, the model sees phases it has never seen. The output falls off a cliff.
 
 <ParamPlot
   compute="posenc.extrapolationGap"
   title="Perplexity surrogate vs inference position, four schemes"
-  caption="Toy penalty curves. RoPE cliffs at L_train. NoPE is flat but carries a constant in-range penalty (no positional signal). YaRN pushes the cliff out. The hybrid inherits RoPE's in-range quality and NoPE's graceful degradation."
+  caption="RoPE cliffs right at L_train (slide it and watch the knee follow). NoPE never cliffs but starts higher: the price of having no positional anchor in-range. YaRN pushes the knee out. The hybrid stays near the floor across the whole range."
   kind="line"
   xLabel="inference position"
   yLabel="perplexity surrogate (lower is better)"
@@ -65,12 +63,12 @@ The pitch for RoPE has always been that it extrapolates. You rotate by $m \cdot 
     { kind: 'slider', param: 'lTrain', label: 'L_train (training length)', min: 2048, max: 32768, step: 1024, format: 'int' },
     { kind: 'slider', param: 'lInfer', label: 'L_infer (inference length)', min: 16384, max: 1048576, step: 8192, format: 'int' },
     { kind: 'slider', param: 'nopePenalty', label: 'NoPE intrinsic penalty', min: 0, max: 1, step: 0.05, format: 'decimal', hint: 'How much NoPE pays in-range for having no positional anchor' },
-    { kind: 'slider', param: 'yarnScale', label: 'YaRN stretch factor', min: 1, max: 8, step: 0.5, format: 'decimal', hint: 'Effective context multiplier from NTK-aware scaling' },
+    { kind: 'slider', param: 'yarnScale', label: 'YaRN stretch factor', min: 1, max: 8, step: 0.5, format: 'decimal', hint: 'Drag right and watch the cliff move out, at a small in-range cost' },
   ]}
   height={320}
 />
 
-The curves are hand-tuned softplus cliffs, not fitted perplexities — trust the shape, ignore the magnitudes. Pure RoPE has a sharp knee. Pure NoPE is shifted up uniformly (worse in the training range, no cliff at all). YaRN stretches the RoPE curve out by rescaling the low-frequency thetas, at a small in-range cost. The hybrid gets closest to the floor across the whole range.
+The curves are hand-tuned softplus cliffs, not fitted perplexities (trust the shape, ignore the magnitudes). Pure RoPE has a sharp knee. Pure NoPE is shifted up uniformly: worse in the training range, no cliff at all. YaRN stretches the RoPE curve out by rescaling the low-frequency thetas, at a small in-range cost. The hybrid gets closest to the floor across the whole range.
 
 <Callout tone="warn" title="The knee is a phase problem, not a length problem">
   RoPE doesn't break because positions get "too large". It breaks
@@ -86,12 +84,12 @@ The core claim in [RoPE-to-NoPE](https://arxiv.org/abs/2501.18795) (2025): you d
 
 The headline results are in two places. On RULER retrieval at 256k context, their hybrid scores 74.8 vs 57.1 for a pure-RoPE baseline (that's a 30% relative improvement where it matters). On RULER QA at 256k, 42.5 vs 30.0. Efficiency-wise the win is almost better: **~50% faster training throughput at 64k context, nearly 2× faster at 128k**, and **44% lower inference latency at 132k input, ~70% at 990k**. Because sliding-window RoPE layers don't need full KV cache, the hybrid gets up to 75% KV-cache reduction.
 
-So the "compromise" in the title is a bit of a rhetorical feint. It's not a compromise; it's a strict improvement on all three axes.
+I went in expecting a trade-off somewhere. There isn't one. It's a strict improvement on all three axes, which is why "compromise" would be the wrong word for what this recipe does.
 
 <ParamPlot
   compute="posenc.layerHybrid"
   title="Recall and throughput vs RoPE:NoPE layer ratio"
-  caption="r = 0 is pure NoPE, r = 1 is pure RoPE. Recall has an interior optimum that moves toward r = 0.75 as context stretches past the training anchor (the Cohere paper's 1 NoPE : 3 RoPE placement). Throughput is monotone in the other direction — fewer RoPE layers = less KV-cache and no rotation overhead. The sweet spot is a small region, not a point."
+  caption="r = 0 is pure NoPE, r = 1 is pure RoPE. Slide the context past 128k and watch the recall optimum drift down from near 1 into the 0.7–0.8 band (right where the Cohere paper's 3:1 recipe sits). Throughput just wants fewer RoPE layers, monotonically. The sweet spot is a small region, not a point."
   kind="line"
   xLabel="RoPE layer fraction r"
   yLabel="normalised score"
@@ -103,7 +101,7 @@ So the "compromise" in the title is a bit of a rhetorical feint. It's not a comp
   height={300}
 />
 
-Two things worth playing with. First, push the context length past 128k and the recall-optimal $r$ drifts down from near-1 (pure RoPE is fine at short context) toward the 0.7–0.8 band. Second, the Cohere paper's placement insight (the NoPE layer sits *after* the RoPE layers in each group, not before) doesn't come out of the toy model here, but the qualitative claim does: mixing beats either extreme.
+One honest caveat about the toy model: the Cohere paper's placement insight (the NoPE layer sits *after* the RoPE layers in each group, not before) doesn't come out of it. The qualitative claim does: mixing beats either extreme.
 
 ## The frequency spectrum view
 
@@ -112,14 +110,14 @@ One more angle worth seeing. RoPE's $\theta_i$ spectrum is a log-linear line in 
 <ParamPlot
   compute="posenc.baseScaling"
   title="RoPE frequency spectrum: log θ_i vs subspace index"
-  caption="The shaded band marks subspaces whose wavelength fits inside the context length (they complete at least one full rotation during training). Subspaces to the right are low-frequency: their phases are only partially explored. Raising the base pushes the whole line down, which shifts the cutoff right — fewer usable in-phase subspaces per context, but more margin for extrapolation past L_train."
+  caption="The shaded band is the 'seen' region: subspaces whose wavelength fits inside the training context, so they complete at least one full rotation. Raise the base and the whole line slides down, pushing the cutoff right (fewer in-phase subspaces per context, but more margin past L_train)."
   kind="line"
   xLabel="subspace index i"
   yLabel="log10(θ_i)"
   params={{ dim: 128, base: 10000, ctx: 8192 }}
   controls={[
     { kind: 'slider', param: 'dim', label: 'Head dim', min: 32, max: 256, step: 16, format: 'int' },
-    { kind: 'slider', param: 'base', label: 'RoPE base b', min: 1000, max: 1000000, step: 1000, format: 'int', hint: '10000 = original; Llama-3 uses 500000; push to 1M for long-context variants' },
+    { kind: 'slider', param: 'base', label: 'RoPE base b', min: 1000, max: 1000000, step: 1000, format: 'int', hint: '10000 = original; slide to 500000 (Llama-3) and watch the band shift' },
     { kind: 'slider', param: 'ctx', label: 'Training context', min: 512, max: 131072, step: 512, format: 'int' },
   ]}
   height={280}
@@ -132,12 +130,12 @@ This is the geometric reason YaRN and NTK-aware scaling work. Raising $b$ from 1
 <Quiz
   question="A pure-RoPE transformer trained at 8k context degrades sharply at 32k inference. You apply YaRN-style NTK scaling and the cliff shifts out, but at 256k the quality still collapses. The Cohere RoPE-to-NoPE hybrid reports much better 256k recall at similar parameter count. Which mechanism best explains the hybrid's advantage at extreme context?"
   choices={[
-    { text: 'The NoPE layers carry no positional phase, so they degrade gracefully outside the training range, while the RoPE sliding-window layers still supply strong local position signal — the hybrid avoids the phase cliff in the long-range layers.', correct: true },
+    { text: 'The NoPE layers carry no positional phase, so they degrade gracefully outside the training range, while the RoPE sliding-window layers still supply strong local position signal: the hybrid avoids the phase cliff in the long-range layers.', correct: true },
     { text: 'The hybrid uses a larger RoPE base b in every layer, which is mathematically equivalent to YaRN but applied globally.' },
     { text: 'The NoPE layers are strictly more expressive than RoPE layers because they do not commit to any positional structure.' },
     { text: 'The hybrid doubles attention layer count, compensating for lost positional signal with extra capacity.' },
   ]}
-  explanation="The hybrid's long-range recall advantage is structural: NoPE layers operate with full attention and no positional phase at all, so they don't have a 'trained range' to leave. RoPE sliding-window layers keep the short-range positional signal they're good at and never get asked to extrapolate globally. YaRN and base-scaling (options like 'larger b') are in the same family but don't remove the phase problem — they push it further out. NoPE layers aren't more expressive in an absolute sense (option 3); they just fail differently."
+  explanation="The hybrid's long-range recall advantage is structural: NoPE layers operate with full attention and no positional phase at all, so they don't have a 'trained range' to leave. RoPE sliding-window layers keep the short-range positional signal they're good at and never get asked to extrapolate globally. YaRN and base-scaling (options like 'larger b') are in the same family but don't remove the phase problem; they push it further out. NoPE layers aren't more expressive in an absolute sense (option 3); they just fail differently."
 />
 
-What I like about this whole arc is that it reads like a small lesson about architecture design: once you stop asking "which positional encoding is best" and start asking "which positional encoding is best *at each layer*", the answer falls out. My earlier post framed RoPE as the terminal winner on the positional axis. That's wrong. RoPE plus the option to opt out is the winner. The cleanest version of any architectural choice often ends up being a mixture of two simpler ones, and this is one more example.
+What I like about this whole arc is that it reads like a small lesson in architecture design: stop asking "which positional encoding is best" and start asking "which positional encoding is best *at each layer*", and the answer falls out. My earlier post framed RoPE as the terminal winner on the positional axis. That's wrong. RoPE plus the option to opt out is the winner.

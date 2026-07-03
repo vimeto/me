@@ -1,8 +1,8 @@
 ---
-title: "Test-time training: LoRA vs SGD"
+title: "Test-time training: when is LoRA enough?"
 slug: test-time-training-lora-vs-sgd
 publishedAt: 2026-04-22
-summary: 'Test-time training updates a model''s weights at inference, once per prompt or batch. This post walks the geometry (LoRA vs full SGD) through four toy models and asks when the rank-r shortcut is fine, when it stalls, and what it costs you at serving time.'
+summary: "Test-time training lets a model nudge its own weights on the very prompt it's about to answer. I wanted to know when the rank-r LoRA shortcut is fine, when it quietly stalls, and what it costs you at serving time. Four toy plots later, the geometry is prettier than I expected."
 tags:
   - language-models/inference/test-time-training
   - optimization/low-rank
@@ -11,21 +11,21 @@ status: draft
 estimatedReadMin: 10
 ---
 
-# Test-time training: LoRA vs SGD
-
 Most of what I do at inference is frozen weights and sampling. Test-time
 training (TTT) is the other thing: the model gets to nudge its own parameters
 on the prompt it's about to answer, either with a self-supervised objective
-([Test-Time Training](https://arxiv.org/abs/1909.13231) (2020)) or with a fresh
-inner-loop that treats each sequence like a tiny fine-tune (the
-[TTT-layers](https://arxiv.org/abs/2407.04620) (2024) paper makes this
-explicit). You pay extra FLOPs per request; you hope the loss on _this_
-example drops far enough to be worth it.
+([Test-Time Training](https://arxiv.org/abs/1909.13231) (2020)) or with a
+fresh inner loop that treats each sequence like a tiny fine-tune
+([TTT-layers](https://arxiv.org/abs/2407.04620) (2024) makes this explicit).
+You pay extra FLOPs per request; you hope the loss on _this_ example drops far
+enough to be worth it.
 
-Two design choices dominate the cost: how many weights are you willing to
-change, and how big are your steps. That's it, in four small plots.
+Two design choices dominate the cost: how many weights you're willing to
+change, and how big your steps are. That's the whole post, in four toy plots.
+(Fair warning: nothing here touches a real checkpoint. These are the toy
+models that made TTT click for me, and the math in them is pretty.)
 
-<Callout tone="insight" title="LoRA at test time is a subspace bet">
+<Callout tone="insight" title="LoRA at test time: a subspace bet">
   LoRA at test time is a rank budget on the update direction, not a cost
   rebate. You get most of the adaptation benefit if the thing that needs
   adapting already lives in a low-rank subspace, and very little of it if the
@@ -70,7 +70,7 @@ for this example"), the number can be much higher.
 <ParamPlot
   compute="ttt.loraCapture"
   title="How much of the update direction a rank-r LoRA catches"
-  caption="Straight line: isotropic gradient (capture = r/d). Curve above it: a power-law gradient where the top few coordinates already dominate. Real training gradients sit somewhere between these two."
+  caption="The straight line is the worst case: an isotropic gradient, where rank r catches exactly r/d of the update. The curve above it is a power-law gradient where the top coordinates dominate. The gap between the two is everything LoRA is betting on."
   kind="line"
   xLabel="LoRA rank r"
   yLabel="captured fraction"
@@ -78,7 +78,7 @@ for this example"), the number can be much higher.
   controls={[
     { kind: 'slider', param: 'd', label: 'Model width d', min: 128, max: 4096, step: 64, format: 'int' },
     { kind: 'slider', param: 'rMax', label: 'Max rank on x-axis', min: 8, max: 256, step: 4, format: 'int' },
-    { kind: 'slider', param: 'alpha', label: 'Gradient concentration α', min: 0.2, max: 2.0, step: 0.05, format: 'decimal', hint: 'higher α = more concentrated in top coords' },
+    { kind: 'slider', param: 'alpha', label: 'Gradient concentration α', min: 0.2, max: 2.0, step: 0.05, format: 'decimal', hint: 'Slide α up and watch the curve peel away from the straight line' },
     { kind: 'slider', param: 'target', label: 'Target capture', min: 0.1, max: 0.95, step: 0.05, format: 'percent' },
   ]}
   height={280}
@@ -113,14 +113,14 @@ progress off the line, ever.
 <ParamPlot
   compute="ttt.trajectory"
   title="Trajectory: full SGD vs LoRA rank-1 in 2D"
-  caption="Ellipsoidal loss with curvature c in y. LoRA here projects every gradient onto a single direction set by θ; when θ is far from the true descent direction, the LoRA path gets stuck on the span."
+  caption="Watch where each path ends, not how it travels. Full SGD zigzags to the origin. The LoRA path projects every gradient onto the single direction θ, so when θ points away from the true descent direction, it parks on the span and stays there."
   kind="line"
   xLabel="x"
   yLabel="y"
   params={{ lr: 0.15, steps: 60, curvature: 5, theta: 0, x0: 1.6, y0: 1.2 }}
   controls={[
     { kind: 'slider', param: 'lr', label: 'Learning rate η', min: 0.01, max: 0.6, step: 0.01, format: 'decimal' },
-    { kind: 'slider', param: 'steps', label: 'TTT steps', min: 5, max: 200, step: 1, format: 'int' },
+    { kind: 'slider', param: 'steps', label: 'TTT steps', min: 5, max: 200, step: 1, format: 'int', hint: 'Give the stuck path 200 steps; it stays stuck' },
     { kind: 'slider', param: 'curvature', label: 'y-curvature c', min: 1, max: 20, step: 0.5, format: 'decimal', hint: 'bigger c = more elongated bowl' },
     { kind: 'slider', param: 'theta', label: 'LoRA direction θ (rad)', min: -1.5, max: 1.5, step: 0.05, format: 'decimal', hint: '0 = x-axis only; π/2 = y-axis only' },
   ]}
@@ -166,7 +166,7 @@ worse than the base. There's a usable band in between.
 <ParamPlot
   compute="ttt.adaptCurve"
   title="TTT loss vs inner-loop step, for three learning rates"
-  caption="Three η values bracketed around the critical learning rate. 'Small' decays to the noise floor in 50-ish steps; 'good' gets there in 10; 'too big' diverges geometrically and is clamped for plotting."
+  caption="Three η values around the critical learning rate. The small one crawls to the noise floor in 50-ish steps, the good one lands in 10, and the too-big one grows geometrically instead of shrinking (clamped here so the plot survives)."
   kind="line"
   xLabel="TTT step t"
   yLabel="auxiliary loss L(t)"
@@ -174,7 +174,7 @@ worse than the base. There's a usable band in between.
   controls={[
     { kind: 'slider', param: 'etaSmall', label: 'η small', min: 0.005, max: 0.2, step: 0.005, format: 'decimal' },
     { kind: 'slider', param: 'etaGood', label: 'η good', min: 0.02, max: 0.35, step: 0.01, format: 'decimal' },
-    { kind: 'slider', param: 'etaBig', label: 'η too big', min: 0.2, max: 0.9, step: 0.01, format: 'decimal' },
+    { kind: 'slider', param: 'etaBig', label: 'η too big', min: 0.2, max: 0.9, step: 0.01, format: 'decimal', hint: 'Drag it back under the critical rate and watch divergence turn into decay' },
     { kind: 'slider', param: 'steps', label: 'Inner-loop steps', min: 10, max: 200, step: 5, format: 'int' },
     { kind: 'slider', param: 'noise', label: 'Noise floor', min: 0, max: 0.1, step: 0.005, format: 'decimal' },
   ]}
@@ -205,14 +205,14 @@ is the Pareto curve of quality vs latency.
 <ParamPlot
   compute="ttt.budget"
   title="Quality gain vs added latency, as a function of LoRA rank"
-  caption="Pareto frontier as r sweeps 1..r_max. Leftmost vline: the heuristic knee (marginal quality per ms stops paying off). Rightmost vline: your latency budget. The band past it is rank you cannot afford."
+  caption="The frontier as rank sweeps 1..r_max. The left vertical line is the knee, where marginal quality per millisecond stops paying. The right one is your latency budget. Everything between them is rank you could buy; everything past the budget is rank you can't afford."
   kind="line"
   xLabel="per-request latency (ms)"
   yLabel="adaptation quality q(r)"
   params={{ baseLatency: 20, perRankCost: 1.2, tau: 8, rMax: 64, budgetMs: 80 }}
   controls={[
     { kind: 'slider', param: 'baseLatency', label: 'Base forward (ms)', min: 5, max: 100, step: 1, format: 'int' },
-    { kind: 'slider', param: 'perRankCost', label: 'Per-rank cost (ms)', min: 0.2, max: 5, step: 0.1, format: 'decimal' },
+    { kind: 'slider', param: 'perRankCost', label: 'Per-rank cost (ms)', min: 0.2, max: 5, step: 0.1, format: 'decimal', hint: 'Crank this up and watch the knee slide left' },
     { kind: 'slider', param: 'tau', label: 'Characteristic rank τ', min: 1, max: 40, step: 1, format: 'int' },
     { kind: 'slider', param: 'rMax', label: 'Max rank considered', min: 8, max: 128, step: 4, format: 'int' },
     { kind: 'slider', param: 'budgetMs', label: 'Latency budget (ms)', min: 20, max: 200, step: 5, format: 'int' },

@@ -2,36 +2,34 @@
 title: "Hi!"
 slug: hello-world
 publishedAt: 2026-03-20
-summary: "A short note on who's writing this blog and why."
+summary: "Who I am, why I'm writing here instead of only in papers, and why the plots on this site have sliders."
 tags:
   - lab-notes
 category: Lab Notes
 status: published
 ---
 
-# Hi!
-
 I find I don't actually understand a paper until I've tried to explain it. This site is me trying.
 
-The hero page on this site already covers the main facts about me, so I won't repeat them here. The short version: I've ended up in an exciting place with duties in three worlds: academic, corporate, and startup, and I plan on writing about whatever I find interesting in any of them. For now most of the weight will sit on my doctoral work, which is small-to-medium-sized language model inference and post-training. That's where I spend most of my working hours, so that's what I'll have something to say about first.
+The hero page already covers the main facts about me, so I won't repeat them here. The short version: I've ended up with duties in three worlds (academic, corporate, and startup), and I plan to write about whatever I find interesting in any of them. For now most of the weight will sit on my doctoral work, which is small-to-medium-sized language model inference and post-training. That's where I spend most of my working hours, so that's what I'll have something to say about first.
 
 As a hobby, I also take part in hackathons, competitions, and similar low-stakes ways to ship something rough on a deadline. A few of those will probably leak in.
 
 ## Why the blog format
 
-In academia, everything revolves around writing papers. So how do these posts differ from manuscripts? And who are the intended readers?
+In academia, everything revolves around writing papers. So how do these posts differ from manuscripts, and who are they for?
 
-Research incentives are genuinely hard to get right, much harder than industry's. Industry has clearer targets (revenue, profit, maybe valuation). Short or long term, those are at least measurable, and they tie back to whether the company keeps existing, and ultimately maximizing them also maximizes shareholders personal gain. Academia decided to use research papers as its equivalent. I think that's a meaningfully worse target than it looks.
+Research incentives are genuinely hard to get right, much harder than industry's. Industry has clearer targets (revenue, profit, maybe valuation). Those are at least measurable, they tie back to whether the company keeps existing, and maximizing them also maximizes the shareholders' personal gain. Academia's equivalent target is the research paper, and I think that's a meaningfully worse target than it looks.
 
-In my view of the perfect world, a research paper would just be a well-written way to communicate done research to other researchers. But due to incentive structures, at least here in Finland, it is very different. It is, largely, the driving force behind research itself. Gaps in existing papers are identified and iterated on, not because they have important implications, but because they serve as easy starting points to write and submit papers to journals and conferences. I, being in academia, am also guilty of this to a certain degree.
+In a perfect world, a paper would just be a well-written way to communicate finished research to other researchers. In practice, at least here in Finland, it's largely the driving force behind the research itself. Gaps in existing papers get identified and iterated on, not because they have important implications, but because they're easy starting points for the next submission. I'm in academia, so I'm guilty of this too, to a degree.
 
-The golden idea I have behind this freely-controllable blog format is to project my views that do not end up in any papers. My current idea is, that I will synthesize findings from interesting papers I find, and their possible implications, publish my negative results, failed experiments, or some ideas I come across in the non-academic world. I plan to measure the success of this blog not by the number of active readers, but by the number of posts I write by the end of 2026. My goal is to have 20 blog posts written in 2026, all being ones which I feel proud of.
+That's the point of a blog I fully control: it's where the things that don't fit in a paper go. Expect syntheses of papers I found interesting and what I think they imply, negative results and failed experiments from my own work, and the occasional idea from outside academia. I'm not measuring success by reader counts. My goal is 20 posts written in 2026, every one of them a post I'm proud of.
 
 ## Blog technical details
 
-Most of these blogposts are technical reflections on things I found prettier than I expected, or an overview of results. As a visual learner myself, I decided to build a system for visual mini-simulations instead of static plots to convey these ideas. This allows you to *feel* the shape of the curve, its sensitivity to a certain parameter, etc.
+Most of these posts are technical reflections on things I found prettier than I expected, or overviews of results. I'm a visual learner, so instead of static plots I built a system for small interactive simulations. You get to *feel* the shape of a curve and how sensitive it is to each parameter, instead of taking my word for it.
 
-Mechanically, every interactive block on this site is a small schema-validated component keyed into a compute registry. The MDX file (the format I write these blogposts in) says what to plot; the registry decides how to compute it. I'll write about this site properly somewhere else; it doesn't belong in an intro.
+Mechanically, every interactive block on this site is a small schema-validated component keyed into a compute registry. The MDX file (the format I write these posts in) says what to plot; the registry decides how to compute it. I'll write about the site properly somewhere else; it doesn't belong in an intro.
 
 ## Learn in public, with footnotes
 
@@ -43,4 +41,4 @@ I'm writing this blog mostly to force my own clarity. The side effect is that so
 
 Comments are open. I plan to read them. If something in a post is wrong, or you've seen the same thing from a better angle, I genuinely want to know.
 
-That's it for the intro. The other posts carry the technical weight; this one was just to set the voice, introduce my reasons for doing this, and set the stakes. Go drag a slider.
+That's it for the intro. The other posts carry the technical weight; this one was just to set the voice and the stakes. Go drag a slider.

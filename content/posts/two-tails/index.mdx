@@ -1,8 +1,8 @@
 ---
-title: 'Two tails: saturation and quantization'
+title: 'Two tails: why do serving queues and quantized weights fail the same way?'
 slug: two-tails
 publishedAt: 2026-04-21
-summary: Serving an ML model stacks two different tail risks (queue saturation near ρ=1 and rounding flips at low bit widths). Both turn well-behaved averages into incidents. Here's the math, the failure modes, and what the knobs actually do.
+summary: Two failure modes from model-serving postmortems, one queuing and one numerics. I was surprised they're the same shape; both look fine at the mean while the tail quietly explodes. Here's the shared math, and the knobs that actually move each tail.
 tags:
   - ml-systems/serving
   - language-models/inference/quantization
@@ -12,13 +12,11 @@ status: draft
 estimatedReadMin: 9
 ---
 
-# Two tails: saturation and quantization
-
 Two failure modes keep showing up in model-serving postmortems, and they look
-unrelated until you plot them. One's a queuing problem (the box is fine at the
-mean, but p99 latency explodes as utilisation climbs toward 1). The other's a
-numerics problem (the model is fine at full precision, but a quantized copy
-starts disagreeing with it on a small subset of inputs and top-1 drifts).
+unrelated until you plot them. One's a queuing problem: the box is fine at the
+mean, but p99 latency explodes as utilisation climbs toward 1. The other's a
+numerics problem: the model is fine at full precision, but a quantized copy
+starts disagreeing with it on a small subset of inputs and top-1 drifts.
 Different teams, different dashboards, different oncalls.
 
 That they're the same shape surprised me. Both are **tail phenomena** (the
@@ -60,14 +58,14 @@ probability than the mean would suggest. The p99 moves faster than the average.
 <ParamPlot
   compute="serving.latencyTail"
   title="P(T > t) for a single M/M/1 replica"
-  caption="Solid curve: survival probability. Vertical line: your SLA. Hatched band: the region past p99 — this is where pages come from."
+  caption="Solid curve: survival probability. Vertical line: your SLA. The hatched band past p99 is where pages come from; push the arrival rate up and watch it grow much faster than the rest of the curve moves."
   kind="area"
   xLabel="latency (ms)"
   yLabel="P(T > t)"
   params={{ qps: 120, serviceMs: 6, slaMs: 50, rangeMs: 250 }}
   controls={[
     { kind: 'slider', param: 'qps', label: 'Arrival rate (qps)', min: 10, max: 200, step: 5, format: 'int', hint: 'Push this up to load the server' },
-    { kind: 'slider', param: 'serviceMs', label: 'Service time (ms)', min: 1, max: 20, step: 0.5, format: 'decimal', hint: 'Smaller = faster server' },
+    { kind: 'slider', param: 'serviceMs', label: 'Service time (ms)', min: 1, max: 20, step: 0.5, format: 'decimal', hint: 'Shave off 1 ms and watch the whole curve pull left' },
     { kind: 'slider', param: 'slaMs', label: 'SLA (ms)', min: 10, max: 300, step: 5, format: 'int' },
     { kind: 'slider', param: 'rangeMs', label: 'x-axis max (ms)', min: 50, max: 600, step: 10, format: 'int' },
   ]}
@@ -77,9 +75,9 @@ Two experiments worth running in the plot above:
 
 1. Pin service time at 6 ms and slide the arrival rate 80 → 160 qps. The mean
    barely moves; the area past the SLA grows non-linearly.
-2. Hold the arrival rate steady and cut service time by 1 ms. Watch the whole
-   curve pull left. A tiny improvement in the body buys a large improvement in
-   the tail (the classic argument for sweating small optimisations in hot code
+2. Hold the arrival rate steady and cut service time by 1 ms. The whole curve
+   pulls left. A tiny improvement in the body buys a large improvement in the
+   tail (the classic argument for sweating small optimisations in hot code
    paths).
 
 <Callout tone="aside" title="Why M/M/1 is enough for intuition">
@@ -115,14 +113,14 @@ $p_\text{flip} \to 1$).
 <ParamPlot
   compute="gptq.flippingRange"
   title="Flip probability vs. weight value"
-  caption="Teal curve: per-weight flip probability. Hatched bands: the 'flipping range' — weights where flip probability is above the chosen threshold."
+  caption="Teal curve: per-weight flip probability, with a tooth at every inter-level boundary. Hatched bands: the 'flipping range' (weights whose flip probability exceeds your threshold). Drop the bits and the teeth spread apart but never get shorter."
   kind="line"
   xLabel="weight w"
   yLabel="flip probability"
   params={{ bits: 4, sigma: 0.1, threshold: 0.3, range: 3 }}
   controls={[
-    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 8, step: 1, format: 'int', hint: 'Grid levels = 2^bits, spread across ±R' },
-    { kind: 'slider', param: 'sigma', label: 'Noise σ', min: 0.02, max: 0.8, step: 0.01, format: 'decimal', hint: 'Same units as w' },
+    { kind: 'slider', param: 'bits', label: 'Bits', min: 2, max: 8, step: 1, format: 'int', hint: 'Grid levels = 2^bits; drop to 2 and watch the teeth spread' },
+    { kind: 'slider', param: 'sigma', label: 'Noise σ', min: 0.02, max: 0.8, step: 0.01, format: 'decimal', hint: 'Raise past half a grid step and every tooth touches 1' },
     { kind: 'slider', param: 'threshold', label: 'Threshold τ', min: 0.05, max: 0.95, step: 0.05, format: 'percent' },
     { kind: 'slider', param: 'range', label: 'Range ±R', min: 1, max: 5, step: 1, format: 'int', hint: 'Full weight range shown on x-axis' },
   ]}
@@ -145,8 +143,8 @@ On the surface these are two different animals: one lives in a load balancer,
 the other in a kernel. But in both cases the median behaviour is fine, the
 metric you're optimising is fine, and the damage shows up in the shape of the
 distribution, at the edge, on a subset of inputs that happen to land in the bad
-region. If you treat them the same way at design time (plot the tail, pick a
-threshold, budget for it) you get fewer surprises at 3 a.m.
+region. Treat them the same way at design time (plot the tail, pick a
+threshold, budget for it) and you get fewer surprises at 3 a.m.
 
 <LoopedSVG
   preset="scan"
