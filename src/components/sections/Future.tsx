@@ -13,7 +13,7 @@ export function Future() {
           whileInView="visible"
           viewport={viewportOnce}
         >
-          <SectionHeader number="04" title="FUTURE" note="2026 – 2027" />
+          <SectionHeader number="05" title="FUTURE" note="2026 – 2027" />
 
           <div className="border border-border/60 p-8 mb-8">
             <h3 className="font-bold text-lg mb-4">Final research push</h3>

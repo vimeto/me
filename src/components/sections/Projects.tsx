@@ -85,7 +85,7 @@ export function Projects() {
   return (
     <section id="projects" className="min-h-screen px-6 py-24">
       <div className="max-w-4xl mx-auto">
-        <SectionHeader number="02" title="PROJECTS" note="2019 – 2026" />
+        <SectionHeader number="03" title="PROJECTS" note="2019 – 2026" />
 
         <motion.div
           variants={staggerChildren(0.08)}

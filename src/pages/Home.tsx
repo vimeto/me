@@ -1,5 +1,6 @@
 import { Hero } from '@/components/sections/Hero'
 import { Research } from '@/components/sections/Research'
+import { Published } from '@/components/sections/Published'
 import { Projects } from '@/components/sections/Projects'
 import { Background } from '@/components/sections/Background'
 import { Future } from '@/components/sections/Future'
@@ -11,6 +12,7 @@ export default function Home() {
     <>
       <Hero />
       <Research />
+      <Published />
       <Projects />
       <Background />
       <Future />

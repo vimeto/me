@@ -52,7 +52,7 @@ export function Contact() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <SectionHeader number="06" title="CONTACT" />
+          <SectionHeader number="07" title="CONTACT" />
 
           <motion.div
             variants={staggerChildren(0.06)}

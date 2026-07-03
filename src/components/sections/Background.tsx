@@ -52,7 +52,7 @@ export function Background() {
           transition={{ duration: 0.3 }}
           viewport={{ once: true }}
         >
-          <SectionHeader number="03" title="BACKGROUND" note="2018 – present" />
+          <SectionHeader number="04" title="BACKGROUND" note="2018 – present" />
 
           <div className="md:grid md:grid-cols-2 md:gap-x-12">
             <div className="mb-12 md:mb-0">

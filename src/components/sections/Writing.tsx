@@ -108,7 +108,7 @@ export function Writing() {
           viewport={{ once: true }}
         >
           <SectionHeader
-            number="05"
+            number="06"
             title="WRITING"
             titleStyle={{ viewTransitionName: 'writing-title' }}
           />

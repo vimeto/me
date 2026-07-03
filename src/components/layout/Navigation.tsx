@@ -29,6 +29,7 @@ function VTMonogram() {
 const sections = [
   { id: 'hero', label: 'Home' },
   { id: 'research', label: 'Research' },
+  { id: 'published', label: 'Published' },
   { id: 'projects', label: 'Projects' },
   { id: 'background', label: 'Background' },
   { id: 'future', label: 'Future' },
