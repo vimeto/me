@@ -53,16 +53,7 @@ export default {
       },
       fontFamily: {
         sans: ["Inter", "system-ui", "sans-serif"],
-        serif: ["Newsreader", "ui-serif", "Georgia", "serif"],
-      },
-      animation: {
-        "fade-in": "fadeIn 0.3s ease-in",
-      },
-      keyframes: {
-        fadeIn: {
-          "0%": { opacity: "0" },
-          "100%": { opacity: "1" },
-        },
+        serif: ["Newsreader Variable", "Newsreader", "ui-serif", "Georgia", "serif"],
       },
       typography: () => ({
         DEFAULT: {

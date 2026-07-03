@@ -19,6 +19,14 @@
       title="Vilhelm Toivonen — Writing (JSON Feed)"
       href="/feed.json"
     />
+    <script>
+      try {
+        var stored = localStorage.getItem('darkMode')
+        if (stored === 'true' || (stored === null && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+          document.documentElement.classList.add('dark')
+        }
+      } catch (e) {}
+    </script>
     <!--head-outlet-->
   </head>
   <body>

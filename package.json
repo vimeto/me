@@ -20,6 +20,7 @@
     "docs:registry": "tsx scripts/generate-registry-docs.ts",
     "ladle:dev": "ladle serve",
     "ladle:build": "ladle build",
+    "test:e2e": "playwright test --config playwright.e2e.config.ts",
     "test:visual": "playwright test",
     "test:visual:update": "playwright test --update-snapshots",
     "worker:dev": "wrangler dev --config worker/wrangler.toml",
@@ -34,6 +35,8 @@
     "*.{ts,tsx,js,mjs,cjs}": "eslint --fix"
   },
   "dependencies": {
+    "@fontsource-variable/newsreader": "^5.2.10",
+    "@fontsource/inter": "^5.2.8",
     "@mdx-js/react": "^3.1.1",
     "@mdx-js/rollup": "^3.1.1",
     "@radix-ui/react-separator": "^1.1.7",

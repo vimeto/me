@@ -6,9 +6,10 @@ import App from './App'
 const root = document.getElementById('root')!
 
 // After prerender (`pnpm build`) the #root element already contains server-
-// rendered markup — hydrate in place. During `pnpm dev` it is empty — mount
-// fresh. Detecting by children count is the canonical cheap heuristic.
-if (root.hasChildNodes()) {
+// rendered markup — hydrate in place. During `pnpm dev` it holds only the
+// `<!--app-html-->` placeholder comment — mount fresh. `hasChildNodes()` counts
+// that comment as a child, so gate on *element* children instead.
+if (root.childElementCount > 0) {
   hydrateRoot(
     root,
     <StrictMode>

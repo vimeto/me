@@ -8,10 +8,12 @@ import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
 import rehypeShiki from '@shikijs/rehype'
+import { postFeaturesPlugin } from './scripts/vite-post-features'
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
+    postFeaturesPlugin(),
     mdx({
       providerImportSource: '@mdx-js/react',
       remarkPlugins: [
@@ -36,6 +38,12 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './src'),
     },
+  },
+  server: {
+    // Native fs events don't reach processes spawned by some supervised shells
+    // (e.g. agent sandboxes); VITE_POLL=1 falls back to polling there. Normal
+    // `pnpm dev` from a terminal is unaffected.
+    watch: process.env.VITE_POLL ? { usePolling: true, interval: 300 } : undefined,
   },
   ssr: {
     // visx + d3-array ship as ESM; mark them external-free so they get bundled
