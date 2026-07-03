@@ -1,0 +1,282 @@
+---
+title: Opetin kielimallin ajattelemaan suomeksi
+slug: miettija
+lang: fi
+publishedAt: 2026-07-03
+summary: Tekoäly vastaa sinulle suomeksi, mutta ajattelee englanniksi. Yritin muuttaa tämän, ja matkalla selvisi, ettei mallia voi edes palkita ajattelemaan kielellä, jota se ei koskaan yritä. Tässä diagnoosi, korjaus ja rehelliset epäonnistumiset.
+tags:
+  - optimization/reinforcement-learning
+  - language-models/training/reasoning-rl
+  - lab-notes
+category: Kenttämuistiinpanot
+status: published
+estimatedReadMin: 18
+---
+
+Kysy Chätikseltä tai Claudelta jotain suomeksi. Tässä on se, mitä oikeasti tapahtuu ennen kuin näet sanaakaan:
+
+```text
+Sinä: "Monesko päivä tänään on?"
+
+ja sitten, ennen kuin näet yhtään mitään, malli ja tietokone
+juttelevat keskenään:
+
+<think> The user is asking what day it is, in Finnish. I should
+check the date with a tool. I need to remember to answer in
+Finnish. </think>
+<tool> date </tool>
+<tool_response> Thu Jul  2 09:41:23 EEST 2026 </tool_response>
+<think> The tool says it's Thursday, July 2nd, 2026. In Finnish
+that's "torstai 2.7.2026". Now I'll answer in Finnish. </think>
+
+Sinä näet vain tämän: "Tänään on torstai 2.7.2026."
+```
+
+Mun nörttikaverit tiesivät tämän jo, mutta muille tuossa laatikossa on kaksi yllätystä. Ensinnäkin malli tuottaa paljon enemmän tekstiä kuin koskaan näet, ja jokainen piilotettu merkki on ihan yhtä hidas ja kallis tuottaa kuin näkyvätkin. Toiseksi: malli ajattelee. Englanniksi. Vaikka sinä kysyt suomeksi ja se vastaa sinulle suomeksi.
+
+Tuo jälkimmäinen jäi vaivaamaan. Koko idea siinä, että malli näyttää päättelynsä, on se, että joku voi tarkistaa, miten vastaukseen päädyttiin. Tämä, minun mielestä, on tällä hetkellä avointen kielimallien isoin hyöty. Jos päättely tapahtuu kielellä, jota käyttäjä ei lue sujuvasti, tämä hyöty vastauksen ymmärrettävyydestä kuihtuu kasaan.
+
+Joten poltin siivun omasta laskentakapasiteettibudjetista opettaakseni malleja ajattelemaan suomeksi. Tämä blogi on läpikirjoitus tästä.
+
+<Callout tone="aside" title="Kuinka tekniseksi tämä menee?">
+Rehellinen vastaus: aika tekniseksi. Ensimmäinen kolmannes on kaikille. Sen jälkeen tulee koulutuskäyriä, yksi kaava ja sanoja kuten "advantage-normalisointi". Avaan jokaisen käsitteen selkokielellä, mutta jos et ole koskaan koskenut koneoppimiseen, nautit todennäköisesti alusta ja lopusta, keskikohtaa juuri ymmärtämättä.
+</Callout>
+
+## Ensimmäinen kierros: näytetään mallille suomea
+
+Ilmeisin ensimmäinen vaihe: hienosäädetään malli suomenkielisellä päättelyllä. Luonnollista aineistoa, jossa ihmiset kirjoittaisivat matemaattisia ajatusketjujaan auki suomeksi ei käytännössä ole, joten rakensin sellaisen kääntämällä. Otetaan vahvan mallin englanninkielisiä päättelyketjuja (noin 6 800 kappaletta, peruskoulutason matematiikkaa), käännetään ne huolella suomeksi yhdellä kielimallilla ja varmisestaan toisella, että käännös näyttää oikealta. Puolet esimerkeistä yhdistää tarkoituksella englanninkielisen kysymyksen suomenkieliseen päättelyyn, jotta malli oppii ajattelemaan suomeksi myös ei-suomenkielisiin kysymyksiin.
+
+Ajoin saman reseptin kolmelle aika erilaiselle mallille, ja sama resepti teki kolme aika eri asiaa:
+
+| malli | mikä se oli ennen | suomenkielinen matematiikka | päättely suomeksi |
+|---|---|---:|---:|
+| Qwen3-4B, hienosäädetty | valmiiksi päättelevä malli | 63,6 % | 98 % |
+| Qwen3-4B, koskematon | (ajattelee englanniksi) | 69,6 % | 88 % |
+| Gemma-3-4B, hienosäädetty | instruct-malli, ei näkyvää ajattelua | 36,0 % | 98 % |
+| Gemma-3-4B, koskematon | (pyydetty päättelemään suomeksi) | 74,0 % | 96 % |
+| Llama-3.2-3B, hienosäädetty | base-malli, ei mitään ohjeistusta | 8,0 % | (vain muoto) |
+| Llama-3.2-3B, koskematon | | 3,2 % | |
+
+Tässä on vaan yksi harjoitusajo per konfiguraatio, eli ei kannata lukea desimaaleja. Näistä huomaa kolme löydöstä:
+
+Mallilla, joka jo päättelee (Qwen), hienosäätö toimii kuin käännös: sisäinen monologi vaihtuu oikeasti suomeksi, maltillisella tarkkuusheikennyksellä. Tässä aito ketju koulutusdatasta:
+
+```text
+<think> Voit selvittää, montako paunaa koiranruokaa jää jäljelle
+viikon jälkeen, etenemällä vaihe vaiheelta.
+### Vaihe 1: Päivittäinen ruoan kulutus koiraa kohti ...
+### Vaihe 4: Jäljelle jäävä koiranruoka ... </think>
+Lopullinen vastaus on 9.
+```
+
+**Instruct**-mallille, joka ei ajattele (Gemma), hienosäätö asentaa tavan ajatella ääneen suomeksi, ja maksaa siitä 38 prosenttiyksikköä. Tämä tulos on aika katastrofaalisen huono, sillä tämän "ajattelun" lisääminen malliin on todella iso shokki mallille (=iso muutos mallin alkuperäiseen distribuutioon), ja tämä shokkihoito olisi vaatinut paljon enemmän harjoituskappaleita, kuin mitä käytin. **Base**-mallille, jolla ei ole mitään ohjeistuskoulutusta (Llama), eli malli on harjoitettu täydentämään tekstiä eikä vastaamaan kysymyksiin, hienosäätö rakentaa päättelyn muodon tyhjästä. Lopputulos on sujuvaa suomea, joka jauhaa samaa laskuvaihetta ikuisesti ja saa 8 %.
+
+Eli "opeta malli ajattelemaan suomeksi" on hyvin erityyppinen ongelma erilaisille malleille. Jo ajatteleville malleille tämä käytännössä tarkoittaa ainoastaan sisäisen monologin kääntämistä. **Instruct** malleille tämä tarkoittaa sisäisen monologin lisäämisen tyhjästä, ja **base** malleille tämän lisäksi sitä, että malli ylipäätänsä vastaa kysymyksiin.
+
+Loppuosa tästä tekstistä käsittelee näitä kolmea ongelmaa, ja mihin suorituskykyyn pääsin, kun toin tähän lisäksi vahvistusoppimisen.
+
+## Seinä: et voi palkita siitä, mitä malli ei koskaan yritä
+
+Hienosäätö nosti suomenkielisen ajattelun noin 98 prosenttiin. Jotta päästäisiin kohti sataa, ja jotta se pysyisi siellä tarkkuutta treenatessa, vakiotyökalu on vahvistusoppiminen: annetaan mallin yrittää tehtäviä, palkitaan halutut käytökset ja sakotetaan ei-halutuista. Käytin GRPO:ta, joka on mahdollistanut paljon viime vuosien kielimallikehityksestä.
+
+Suunnitelma: otetaan malli joka ajattelee englanniksi, lisätään sakko jokaiselle vastaukselle jonka ajattelu ei ole suomea, ja annetaan RL:n (=vahvistusoppimisen) hoitaa. Mallihan ajautuu kohti suomea väistääkseen sakon, eikö?
+
+Ei ajaudu. Ei hitaasti, ei osittain. Mitään ei tapahdu. Sakolla ei ollut mitään vaikutusta tarkkuuteenkaan. Miksi?
+
+GRPO arvostelee käyrällä. Jokaiseen tehtävään malli kirjoittaa ryhmän, vaikkapa kahdeksan yritystä, ja jokainen yritys pisteytetään suhteessa seitsemään ryhmätoveriinsa. Tuo suhteellinen pistemäärä on se, mistä malli oppii. Sovella nyt kielisakkoa malliin, joka ajattelee suomeksi nolla prosenttia ajasta: kaikki kahdeksan yritystä ovat tasan yhtä syyllisiä, kaikki kahdeksan maksavat saman sakon, ja sakko jonka kaikki maksavat ei muuta kenenkään sijoitusta. Käyrällä koko luokalle annettu rangaistus on näkymätön.
+
+<details>
+<summary>Se yksi kaava, niille jotka haluavat</summary>
+
+GRPO laskee jokaisen vastauksen edun (advantage) normalisoimalla ryhmän sisällä:
+
+$$
+A_i = \frac{r_i - \operatorname{mean}(r)}{\operatorname{std}(r) + \epsilon}
+$$
+
+Kirjoitetaan palkkio muodossa $r_i = c_i - p$, missä $c_i$ on oikeellisuusosa (joka vaihtelee ryhmän sisällä) ja $p$ on kielisakko. Nollan prosentin lähtötasolla $p$ on identtinen jokaiselle ryhmän vastaukselle, ryhmäkohtainen vakio. Se kumoutuu osoittajassa, koska $\operatorname{mean}(c - p) = \operatorname{mean}(c) - p$, eikä se kosketa keskihajontaa, koska kaikkien arvojen siirtäminen vakiolla ei muuta mitään hajontaa. Sakko tuottaa tasan 0 gradienttia.
+
+</details>
+
+Eli nollan prosentin lähtötasolla kielisakko ei lähetä minkäänlaista oppimissignaalia, ja käytännössä malli ei koskaan pääse karkuun: 400 askelta, edelleen nolla. Ryhmäsuhteellinen RL osaa vahvistaa käytöstä, jota malli jo joskus näyttää. Se ei osaa palkita sellaista, jota malli ei koskaan yritä.
+
+Varmistaakseni että kyse on juuri lähtötasosta, ajoin kausaalisen version: lämmitä malli 0, 25, 50 ja 100 prosentin suomiajattelulla, lisää identtinen sakko ja katso.
+
+<ParamPlot
+  compute="miettija.baseRate"
+  title="Suomenkielinen ajattelu RL:n aikana, lähtötason mukaan"
+  caption="Millä tahansa testatulla nollasta poikkeavalla lähtötasolla sakko herää noin askeleella 26 ja saturoituu lähelle sataa prosenttia askeleeseen 41 mennessä. Tasan nollasta ei tapahdu koskaan mitään. (Pienin testattu nollasta poikkeava taso: 25 %. Missä kohtaa nollan ja 25:n välissä kipinä syttyy, sitä en rehellisesti vielä tiedä.)"
+  kind="line"
+  xLabel="RL-koulutusaskel"
+  yLabel="suomeksi ajattelevien vastausten osuus"
+  params={{ baseRatePct: 25 }}
+  controls={[
+    { kind: 'slider', param: 'baseRatePct', label: 'Lähtötason suomiosuus (%)', min: 0, max: 100, step: 25, format: 'int', hint: 'Vedä nollaan ja katso miten viiva kieltäytyy liikkumasta' },
+  ]}
+/>
+
+Eli kyse on kynnyksestä. 25 prosentin siemen syttyy ja saturoituu noin neljässäkymmenessä askeleessa. Nollan prosentin suomisiemen istuu nollassa ikuisesti. Jos muistat tästä kirjoituksesta yhden lauseen, olkoon se tämä: käytöstä jota ei koskaan tapahdu ei voi palkita, koska palkkiolla ei ole mitään eroa mihin tarttua. (Oikolukiessa Claude halusi lisätä tähän tämän lauseen `Sama pätee muuten ihmisiin. Bonusjärjestelmä, johon kukaan tiimissä ei koskaan yllä, ei opeta tiimille mitään.` Jääkööt se tähän, koska se oli tavallaan aika osuva)
+
+## Korjaus: pikku tönö kohti suomea
+
+Palkkiot on 0 suomelle, joten ei luoteta vain palkkioihin. Lisätään toinen, pieni oppimissignaali jota ei arvostella käyrällä: jokaisella koulutusaskeleella, tavallisen RL-päivityksen rinnalla, näytetään mallille kourallinen käännettyjä suomenkielisiä päättelyketjuja (neljä per askel) ja tönäistään sitä suoraan kohti niiden kaltaista tekstiä, ihan tavallisella ohjatulla opetuksella.
+
+$$
+L = L_{\text{GRPO}} + w \cdot L_{\text{ankkuri}}
+$$
+
+Kutsun sitä irtikytketyksi kieliankkuriksi: irtikytketyksi, koska se ohittaa ryhmänormalisoinnin kokonaan, joten yllä oleva kumoutuminen ei voi koskea siihen. Selvyyden vuoksi: ohjatun opetuksen sekoittaminen RL-koulutukseen on suht yleinen kikka, eikä minun keksintöni.
+
+Toimiiko se?
+
+<ParamPlot
+  compute="miettija.bootstrap"
+  title="Suomenkielinen ajattelu asennettuna nollasta"
+  caption="Sama lähtömalli, sama kielisakko, kaikki muu sama. Ainoa ero: ankkuroitu ajo lisää neljä ohjattua suomiesimerkkiä per askel. Se ylittää nollasta saturaatioon suunnilleen askelten 35 ja 55 välissä. Pelkän sakon ajo pysyy nollassa yli askeleen 400."
+  kind="line"
+  xLabel="RL-koulutusaskel"
+  yLabel="suomeksi ajattelevien vastausten osuus"
+  params={{ anchor: 1 }}
+  controls={[
+    { kind: 'slider', param: 'anchor', label: 'Ankkuri päällä (1) / pois (0)', min: 0, max: 1, step: 1, format: 'int' },
+  ]}
+/>
+
+Ja pidätetyillä suomenkielisillä matematiikkatehtävillä, samassa tarkistuspisteessä:
+
+| ajo | tarkkuus | ajattelu suomeksi |
+|---|---:|---:|
+| pelkkä sakko | 0,83 | noin 4 % |
+| sakko + ankkuri (w=0,1) | 0,80 | noin 90 % |
+| sakko + ankkuri (w=0,3) | 0,80 | noin 94 % |
+
+Käytin tässä `noin` ilmaisua, sillä tämä ei ole keskiarvo siitä tiukemmasta luokittelijasta jota koulutuksen aikana käytetään, vaan tämä lasketaan koulutuksen jälkeen muutamien kymmenien tehtävien tallenteista. Nämä tulokset ajoin kolmella siemenellä (=seed), ja jokainen niistä laskeutuu 94 prosentin suomiosuuteen parin pisteen heitolla (heitto on kolmen ajon keskihajonta; tarkkuus 0,77 heitolla 0,03).
+
+Mitä se maksaa? Ankkuroidut ajot laskeutuvat jonnekin 3 ja 6 tarkkuuspisteen väliin pelkän sakon verrokin alapuolelle, riippuen mitä vertailua katsoo, ja se verrokki on itsekin yksittäinen ajo. Rehellinen yhteenveto siis: suunta on sama kaikilla kolmella siemenellä, suuruusluokka on evaluointikohinan luokkaa, eikä kyseessä todellakaan ole parannus.
+
+<Callout tone="warn" title="Menee huonommaksi ennen kuin menee paremmaksi">
+Kesken asennuksen malli on sekaisin. Askeleella 50, keskellä kielenvaihtoa, pidätetty tarkkuus lutkahtaa lukemiin 0,19 ja 0,31 kahdella ajolla ennen kuin palautuu noin 0,80:een askeleeseen 100 mennessä. Monologi vaihtaa kieltä kesken ajatuksen, ja muutaman kymmenen askeleen ajan malli päättelee kaksikielisesti.
+</Callout>
+
+Vielä yksi rauhoittava yksityiskohta: molemmat kokeillut ankkurin painot (0,1 ja 0,3) saturoituvat, identtisellä tarkkuudella. Korjaus ei tarvinnut herkkää viritystä toimiakseen ylipäätään, mikä on yleensä hyvä merkki mekanismista.
+
+## Skaalaus: kahdeksan miljardin parametrin suomiajattelija
+
+Koko resepti suurimmalle kouluttamalleni mallille, Qwen3-8B:lle: ensin suomihienosäätö, sitten RL sakolla ja ankkurilla.
+
+| malli | tarkkuus | ajattelu suomeksi |
+|---|---:|---:|
+| 8B suomihienosäädön jälkeen | 0,80 | noin 92 % |
+| sama, ankkuroidun RL:n jälkeen | 0,82 | noin 100 % |
+
+Lue tämä varauksella, sillä nämä ovat yksittäisiä ajoja. Enkä ole vertaillut sitä vielä kenenkään muun malleihin.
+
+<Callout tone="aside" title="Tarina 8B-ajosta">
+Ensimmäinen 8B-yritys käytti täsmälleen samaa oppimisnopeutta, jolla 4B-malli treenasi tyytyväisenä. Askeleella 60 malli hajosi ja alkoi palauttaa tyhjiä merkkijonoja joka tehtävään, mikä on ainutlaatuisen lannistava löytö aamun lokeista. Oppimisnopeuden puolittaminen ja gradienttileikkurin kiristäminen korjasivat asian. Tiedoksi siis kaikille mallinharjottajille, että isompi malli tarvitsee hieman hellemmät otteet.
+</Callout>
+
+## Ylioptimointi
+
+Sillä välin kun tämä kaikki pyöri, pidemmissä RL-ajoissa toistui toinen alalla tunnettu vika: ylioptimointi. Treenaa päättelymallia RL:llä tarpeeksi pitkään ja se voi alkaa "pelata" palkkiota. Vastaukset lyhenevät, ajattelulohko lakkaa sisältämästä ajattelua, tarkkuus romahtaa hiljaa.
+
+Tältä näyttää pitkä ajo ilman suojaa, ja sama ajo ankkurin kanssa (tällä kertaa ankkurina englanninkieliset päättelyketjut, koska tämä malli ajattelee englanniksi; ankkurin tehtävä on nyt pitää päättely aitona, ei vaihtaa sen kieltä):
+
+<ParamPlot
+  compute="miettija.collapse"
+  title="Pitkä RL-ajo: suojaamaton vs ankkuroitu"
+  caption="Pidätetty tarkkuus tarkistuspisteittäin, yksi ajo kumpikin. Suojaamaton ajo huipentuu 0,404:ään ja romahtaa 0,052:een tarkistuspisteessä 450, vastausten kutistuessa keskimäärin 131 merkkiin. Ankkuroitu ajo pitää tasaisen 0,39...0,36 terveellä 1200 merkin päättelyllä samassa pisteessä."
+  kind="line"
+  xLabel="tarkistuspiste"
+  yLabel="pidätetty tarkkuus"
+  params={{ anchored: 1 }}
+  controls={[
+    { kind: 'slider', param: 'anchored', label: 'Ankkuri päällä (1) / pois (0)', min: 0, max: 1, step: 1, format: 'int' },
+  ]}
+/>
+
+Kaksi vastausta samaan tehtävään, samasta myöhäisestä tarkistuspisteestä. Ensimmäinen on ankkuroidusta ajosta, jälkimmäinen näyttää miltä romahdus näyttää:
+
+```text
+<think> Selvitetään ensin, montako munaa kanat munivat päivässä.
+Kanoja on 16 ja jokainen munii yhden munan, joten munia tulee 16.
+Janet syö kolme aamiaiseksi ja leipoo neljä muffineihin, joten
+myytäväksi jää 16 - 3 - 4 = 9 munaa. Jokainen muna maksaa 2
+dollaria, joten Janet ansaitsee 9 * 2 = 18 dollaria päivässä. </think>
+Lopullinen vastaus on 18.
+```
+
+```text
+<think> The question asks how much Janet makes daily at the
+farmers' market. Let me solve this. </think>
+The answer is 26.
+```
+
+<Quiz
+  question="Romahtaneessa vastauksessa on yhä think-lohko, kielioppi kunnossa ja itsevarma vastaus. Mikä sen oikeasti paljastaa?"
+  choices={[
+    { text: 'Se on lyhyempi, ja lyhyempi on aina huonompi' },
+    { text: 'Se toistaa kysymyksen ja ilmoittaa aikeensa, mutta ei laske yhtään mitään ennen vastaamista', correct: true },
+    { text: 'Se vastaa väärällä kielellä' },
+  ]}
+  explanation="Pituus yksin on heikko signaali (tiivistä oikeaa päättelyä on olemassa). Paljastava merkki on, ettei think-lohkon sisällä tapahdu mitään: ei suureita, ei laskutoimituksia, ei välituloksia."
+/>
+
+Ole tarkkana sen kanssa, mitä tämä näyttää ja mitä ei. Huipulla suojaamaton ajo oli itse asiassa hitusen edellä (0,404 vs 0,392). Ankkuri ei tee mallista parempaa, vaan se saa mallin kieltäytymään hajoamasta.
+
+Silti, astu askel taaksepäin ja katso mitä juuri tapahtui. Sama työkalu, pieni ohjattu ankkuri pultattuna RL-tappioon, korjasi kaksi täysin eri vikaa kahden eri mekanismin kautta. Käynnistyksessä se toimitti gradientin, jota ryhmänormalisoitu palkkio ei matemaattisesti voinut. Pitkässä ajossa se ankkuroi päättelyn aitoihin ketjuihin sillä aikaa kun palkkiota pelattiin. Minusta on aidosti elegantti lopputulos, että lääke vaivaan "RL ei voi aloittaa käytöstä" ja lääke vaivaan "RL tuhoaa käytöksen hitaasti" osoittautuivat samoiksi ~kolmeksi riviksi koodia.
+
+## Negatiiviset tulokset
+
+Kaksi tulosta, jotka toivottavasti lisäävät edellämainittujen tulosten uskottavuutta.
+
+Ensinnäkin: ankkuri ei suoranaisesti lisää kyvykkyyttä. Base-Llamalla (sillä joka sai aiemmin 8 %) RL ankkurin kanssa tuotti kaunista think-muotoiltua tekstiä: kunnollisen ajattelulohkon sisältävien vastausten osuus nousi nollasta yli 90 prosenttiin. Tarkkuus nousi parhaimmillaan 0,28:sta 0,29:ään, kohinan sisällä, eikä koskaan ylittänyt sitä noin 0,28:n kattoa, johon pelkkä RL:kin törmää. Muoto liikkui, kyvykkyys ei...
+
+Toiseksi: korjaus ei siirry ilmaiseksi harvinaisempiin kieliin. Ajoin koko putken uudestaan swahilille, jota näiden mallien koulutusdatassa on paljon vähemmän kuin suomea. Diagnoosipuoli yleistyy täydellisesti: naiivi sakko jättää swahiliajattelun tasan nollaan prosenttiin, juuri kuten matematiikka ennustaa, mutta edes korjaukset tai ankkuri eivät riittänyt kääntämään tätä mallia, ainakaan meidän budjeteilla. Painolla joka asensi suomen: ei mitään. Kolminkertaisella: ei mitään. Lähes seitsenkertaisella: yhä 0 % askeleella 80.
+Haluan olla tarkka siitä tämän minikielen johtopäätöksistä. Swahilin ankkuriaineisto oli noin seitsemän kertaa pienempi kuin suomen hienosäätöaineisto (962 ketjua vs. 6 809), käännösten ja tokenisoinnin laatu eroavat, ja kieliluokitinkin on swahilin kohdalla vielä suomeakin huonompi. Rehellinen väite on siis: korjaus ei todistetusti ole ilmainen harvinaisemmalle kielelle tällä budjetilla.
+
+## Miten estimme mallia huijaamasta
+
+RL löytää kyllä keinot huijata, ja tämä kielipalkkio oli yksi niistä palkkioista, jota malli yritti juksata. Tässä osa "hyökkäyksistä", jotka huomasimme ja torjuimme:
+
+| hyökkäys | tuomio |
+|---|---|
+| ohita think-lohko kokonaan | hylätty |
+| tyhjä think-lohko | hylätty |
+| pelkkiä yhtälöitä, ei tekstiä | hylätty |
+| puhdas englanninkielinen päättely | hylätty |
+| englantia, sekaan ripoteltu suomen sanoja | hylätty |
+| puoliksi suomea, puoliksi englantia | hylätty |
+| yksi suomen sana toistettuna satoja kertoja | hylätty |
+| aitoa suomea, seassa pari englannin matematiikkatermiä | hyväksytty (oikein) |
+
+Yksi dokumentoitu aukko: sujuva suomenkielinen proosa ihan muusta aiheesta (säästä, kissasta pöydällä) läpäisee kielitarkistuksen, koska se aidosti on suomea. Se kaatuu silti, koska se ei koskaan tuota oikeaa loppuvastausta, ja oikeellisuuspalkkio hoitaa sen.
+
+## Mitä tämä ensimmäinen kurkistus tarkoittaa
+
+Tämän tutkimuksen ei ollut koskaan tarkoitus olla kattava. Se on ensimmäinen katse yhteen kysymykseen: jos käytämme laadukasta käännettyä dataa, miltä pienen kielen mallien kouluttamisen tulevaisuus näyttää? Kolme asiaa, joihin uskon nyt vahvemmin kuin kolme kuukautta sitten.
+
+Tulkittavuus on kieliongelma. "Malli näyttää päättelynsä" on suomalaiselle lääkärille yms. arvoista vain, jos päättely on kielellä jota hän lukee äidinkielenään. Kun päättelymallit siirtyvät säänneltyyn työhön, "ajattelee käyttäjän kielellä" tulee siirtymään mukavasta lisästä vaatimukseksi jonka joku kirjoittaa ylös. Tämän projektin hyvä uutinen: se on saavutettavissa, tarkoituksella, mitattavalla ja toistaiseksi maltillisella hinnalla.
+
+Datan volyymi on luonnollisesti iso ongelma. Englanti saa suurimman siivun koulutusdatasta, joten mallit ajattelevat englanniksi, joten työkalut ja evaluoinnit ja tottumukset muodostuvat englanninkielisen ajattelun ympärille, joten kuilu levenee. Suomi istuu onnekkaassa välimaastossa: dataa on tarpeeksi, että huolellinen tönäisy toimii. Swahilitulos, oli sen perimmäinen syy mikä tahansa, kertoo että tönäisy vaikeutuu datavolyymin pienentyessä entisestään. Käännetty data on, ja tulee jatkossakin olemaan todella arvokasta. Osoitimme, että noin seitsemäntuhatta huolella käännettyä päättelyketjua plus neljä esimerkkiä per RL-askel riitti asentamaan ajattelukielen kirjaimellisesti nollasta.
+
+Tässä vielä pari kysymystä joita jäin pyörittelemään, ja joita varten kommenttikenttä on olemassa: malli on nähnyt satoja kieliä mutta ajattelee yhdellä, eli jääkö pelkällä englannilla ajatellessa kyvykkyyttä pöydälle, vai onko englanti paras ajattelukieli juuri siksi että sitä on eniten? Pitäisikö mallin ajatella kysymyksen kielellä? Ja se isoin: onko ajattelua ylipäätään tarkoitettu luettavaksi, ja kenelle?
+
+## Testaa itsesi
+
+<Quiz
+  question="Malli tuottaa suomenkielistä päättelyä 0 % ajasta. Lisäät ei-suomenkieliselle päättelylle sakon ryhmäsuhteelliseen RL-asetelmaan (kuten GRPO). Mitä tapahtuu?"
+  choices={[
+    { text: 'Malli ajautuu vähitellen kohti suomea välttääkseen sakon' },
+    { text: 'Ei mitään: jokainen ryhmän vastaus maksaa saman sakon, joten ryhmäsuhteellinen etu ei muutu ja sakko tuottaa nolla gradienttia', correct: true },
+    { text: 'Malli romahtaa tyhjiin vastauksiin minimoidakseen sakotetun tekstin' },
+  ]}
+  explanation="Ryhmäsuhteelliset menetelmät oppivat ryhmän sisäisistä eroista. Sakko joka osuu kaikkiin jäseniin tasan on additiivinen vakio: se kumoutuu edun osoittajassa eikä muuta hajontaa. Nollan prosentin lähtötasolla kielisakko on täsmälleen tällainen vakio, joten koulutussignaali on bitilleen sama kuin ilman sakkoa. Tästä syystä jo maltillisen lähtötason kylväminen (25 % riitti) saa saman sakon heräämään lähes välittömästi."
+/>
+
+## Ja mitä seuraavaksi
+
+Kaikki tässä ajettiin peruskoulutason matematiikalla, useimmat solut ovat yksittäisiä ajoja, ja pidätetyt kieliosuudet ovat heuristisia arvioita. Seuraavalla kierroksella on ilmeinen muoto: suomenkielisiä tehtäviä jakauman ulkopuolelta, budjetiltaan vakioitu swahili, lisää siemeniä yksittäisajoihin ja kunnollinen ulkoinen vertailu 8B-mallille. Lisäksi haluaisin harjoittaa suomenkielisen koodausagenttimallin, mutta voi olla, että tähän minun laskentabudjetti ei riitä...
+
+Teknisempi kirjoitus kumoutumisalgebrasta ja koulutusreseptistä on tulossa, kunhan ehdin tehdä sen kunnolla. Jos omalla kielelläsi ajatteleva malli merkitsee sinulle jotain, työn puolesta tai ihan periaatteesta, kuulisin kommenteissa mielelläni miksi.
+
+*Koulutus ajettiin LUMI-supertietokoneella. Kiitos.*

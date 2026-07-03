@@ -1,0 +1,283 @@
+---
+title: Teaching a language model to think in Finnish
+slug: miettija
+lang: en
+publishedAt: 2026-07-03
+summary: Your AI answers you in Finnish, but it thinks in English. I tried to change that, and along the way it turned out you cannot even reward a model into thinking in a language it never tries. Here is the diagnosis, the fix, and the honest failures.
+tags:
+  - optimization/reinforcement-learning
+  - language-models/training/reasoning-rl
+  - lab-notes
+category: Field notes
+status: published
+estimatedReadMin: 18
+---
+
+Ask ChatGPT or Claude something in Finnish. Here is what actually happens before you see a single word:
+
+```text
+You: "Monesko päivä tänään on?"   (What day is it today?)
+
+and then, before you see anything at all, the model and the
+computer talk among themselves:
+
+<think> The user is asking what day it is, in Finnish. I should
+check the date with a tool. I need to remember to answer in
+Finnish. </think>
+<tool> date </tool>
+<tool_response> Thu Jul  2 09:41:23 EEST 2026 </tool_response>
+<think> The tool says it's Thursday, July 2nd, 2026. In Finnish
+that's "torstai 2.7.2026". Now I'll answer in Finnish. </think>
+
+All you ever see is this: "Tänään on torstai 2.7.2026."
+```
+
+My nerd friends knew this already, but there are two surprises in that box for everyone else. First, the model produces far more text than you ever see, and every hidden token is exactly as slow and expensive to generate as the visible ones. Second, the model thinks. In English. Even when you ask in Finnish and it answers you in Finnish.
+
+That second one kept bugging me. The whole point of a model showing its reasoning is that someone can check how it arrived at the answer. This, in my opinion, is currently the single biggest benefit of open language models. If the reasoning happens in a language the user does not read fluently, that benefit of an understandable answer withers away.
+
+So I burned a slice of my own compute budget teaching models to think in Finnish. This post is the write-up.
+
+<Callout tone="aside" title="How technical does this get?">
+Honest answer: fairly technical. The first third is for everyone. After that come training curves, one equation, and words like "advantage normalization". I will open up every concept in plain language, but if you have never touched machine learning, you will probably enjoy the beginning and the end without quite following the middle.
+</Callout>
+
+## Round one: show the model some Finnish
+
+The obvious first step: fine-tune a model on Finnish reasoning. There is essentially no natural data of humans writing out their mathematical chains of thought in Finnish, so I built a dataset by translation. Take a strong model's English reasoning traces (about 6,800 of them, grade-school math), translate them carefully into Finnish with one language model, and have another verify that the translation looks right. Half the examples deliberately pair an English question with Finnish reasoning, so the model learns to think in Finnish even for questions that are not in Finnish.
+
+I ran the same recipe on three quite different models, and the same recipe did three quite different things:
+
+| model | what it was before | Finnish math accuracy | reasoning in Finnish |
+|---|---|---:|---:|
+| Qwen3-4B, fine-tuned | already a reasoning model | 63.6% | 98% |
+| Qwen3-4B, untouched | (thinks in English) | 69.6% | 88% |
+| Gemma-3-4B, fine-tuned | instruct model, no visible thinking | 36.0% | 98% |
+| Gemma-3-4B, untouched | (prompted to reason in Finnish) | 74.0% | 96% |
+| Llama-3.2-3B, fine-tuned | base model, no instructions at all | 8.0% | (format only) |
+| Llama-3.2-3B, untouched | | 3.2% | |
+
+There is only one training run per configuration here, so do not read the decimals. Three findings stand out.
+
+For a model that already reasons (Qwen), the fine-tune works like translation: the internal monologue genuinely switches to Finnish, at a modest accuracy cost. Here is a real trace from the training data:
+
+```text
+<think> Voit selvittää, montako paunaa koiranruokaa jää jäljelle
+viikon jälkeen, etenemällä vaihe vaiheelta.
+### Vaihe 1: Päivittäinen ruoan kulutus koiraa kohti ...
+### Vaihe 4: Jäljelle jäävä koiranruoka ... </think>
+Lopullinen vastaus on 9.
+```
+
+For an **instruct** model that does not think out loud (Gemma), the fine-tune installs the habit of thinking aloud in Finnish, and pays 38 percentage points for it. That result is pretty catastrophically bad, because adding this "thinking" is a really big shock to the model (a big shift from the model's original distribution), and that shock therapy would have needed far more training examples than I used. For a **base** model with no instruction training at all (Llama), meaning a model trained to complete text rather than answer questions, the fine-tune builds the shape of reasoning from nothing. The result is fluent Finnish that grinds the same arithmetic step forever and scores 8%.
+
+So "teach a model to think in Finnish" is a very different problem for different kinds of models. For models that already think, it in practice just means translating the internal monologue. For **instruct** models it means installing an internal monologue from scratch, and for **base** models, on top of that, getting the model to answer questions at all.
+
+The rest of this text is about these three problems, and about how far I got once I additionally brought in reinforcement learning.
+
+## The wall: you cannot reward what the model never tries
+
+Fine-tuning got Finnish thinking to roughly 98%. To push toward 100%, and to keep it there while training for accuracy, the standard tool is reinforcement learning: let the model attempt problems, reward the behaviors you want, penalize the ones you do not. I used GRPO, which has powered a lot of the last few years' progress in language models.
+
+The plan: take a model that thinks in English, add a penalty to every completion whose thinking is not Finnish, and let RL (reinforcement learning) do its thing. Surely the model drifts toward Finnish to dodge the fine, right?
+
+It does not. Not slowly, not partially. Nothing happens. The penalty had no effect on accuracy either. Why?
+
+GRPO grades on a curve. For each problem, the model writes a group of, say, eight attempts, and each attempt is scored relative to its seven groupmates. That relative score is what the model learns from. Now apply a language fine to a model that thinks in Finnish zero percent of the time: all eight attempts are equally guilty, all eight pay the same fine, and a fine that everyone pays changes nobody's rank. On a curve, a punishment handed to the whole class is invisible.
+
+<details>
+<summary>The one equation, for those who want it</summary>
+
+GRPO computes each completion's advantage by normalizing within the group:
+
+$$
+A_i = \frac{r_i - \operatorname{mean}(r)}{\operatorname{std}(r) + \epsilon}
+$$
+
+Write the reward as $r_i = c_i - p$, where $c_i$ is the correctness part (which varies within the group) and $p$ is the language penalty. At a 0% base rate, $p$ is identical for every completion in the group, a per-group constant. It cancels in the numerator, since $\operatorname{mean}(c - p) = \operatorname{mean}(c) - p$, and it does not touch the standard deviation, since shifting every value by a constant changes no spread. The penalty contributes exactly zero gradient.
+
+</details>
+
+So at a 0% base rate the language penalty sends no learning signal whatsoever, and in practice the model never escapes: 400 steps, still zero. Group-relative RL can amplify a behavior the model already shows sometimes. It cannot reward one the model never tries.
+
+To pin down that this is really about the base rate, I ran the causal version: warm-start the model at 0%, 25%, 50%, and 100% Finnish thinking, add the identical penalty, and watch.
+
+<ParamPlot
+  compute="miettija.baseRate"
+  title="Finnish thinking during RL, by warm-start base rate"
+  caption="With any tested non-zero starting rate, the penalty engages around step 26 and saturates near 100% by step 41. From exactly zero, nothing ever happens. (Smallest non-zero rate tested: 25%. Where between 0 and 25 the spark catches, I honestly do not know yet.)"
+  kind="line"
+  xLabel="RL training step"
+  yLabel="fraction of rollouts thinking in Finnish"
+  params={{ baseRatePct: 25 }}
+  controls={[
+    { kind: 'slider', param: 'baseRatePct', label: 'Warm-start Finnish rate (%)', min: 0, max: 100, step: 25, format: 'int', hint: 'Drag to 0 and watch the line refuse to move' },
+  ]}
+/>
+
+So it is a threshold. A 25% seed catches fire and saturates within about forty steps. A 0% Finnish seed sits at zero forever. If you remember one sentence from this post, make it this one: you cannot reward a behavior that never occurs, because there is no difference for the reward to grab onto. (While proofreading, Claude wanted to add this sentence here: `The same is true of people, by the way. A bonus scheme that nobody on the team ever qualifies for teaches the team nothing.` I am letting it stay, because it was honestly kind of apt.)
+
+## The fix: a little nudge toward Finnish
+
+The rewards give zero for Finnish, so let's not rely on rewards alone. Add a second, small learning signal that is not graded on a curve: at every training step, alongside the usual RL update, show the model a handful of translated Finnish reasoning traces (four per step) and nudge it directly toward text like them, with plain old supervised learning.
+
+$$
+L = L_{\text{GRPO}} + w \cdot L_{\text{anchor}}
+$$
+
+I call it a decoupled language anchor: decoupled, because it bypasses the group normalization entirely, so the cancellation above cannot touch it. To be clear, mixing supervised learning into RL training is a fairly common trick, not my invention.
+
+Does it work?
+
+<ParamPlot
+  compute="miettija.bootstrap"
+  title="Finnish thinking installed from zero"
+  caption="Same starting model, same language penalty, same everything. The only difference: the anchored run adds four supervised Finnish examples per step. It crosses from 0% Finnish thinking to saturation between roughly steps 35 and 55. The penalty-only run stays at zero past step 400."
+  kind="line"
+  xLabel="RL training step"
+  yLabel="fraction of rollouts thinking in Finnish"
+  params={{ anchor: 1 }}
+  controls={[
+    { kind: 'slider', param: 'anchor', label: 'Anchor on (1) / off (0)', min: 0, max: 1, step: 1, format: 'int' },
+  ]}
+/>
+
+And on held-out Finnish math problems, at the matched checkpoint:
+
+| run | accuracy | thinking in Finnish |
+|---|---:|---:|
+| penalty only | 0.83 | roughly 4% |
+| penalty + anchor (w=0.1) | 0.80 | roughly 90% |
+| penalty + anchor (w=0.3) | 0.80 | roughly 94% |
+
+I wrote `roughly` because this is not an average from the stricter classifier used during training; it is computed after training from saved samples of a few dozen problems. I ran these results with three seeds, and every one of them lands at 94% Finnish give or take a couple of points (the spread is the standard deviation across the three runs; accuracy 0.77 give or take 0.03).
+
+What does it cost? The anchored runs land somewhere between 3 and 6 accuracy points below the penalty-only control, depending on which comparison you take, and that control is itself a single run. So the honest summary is: the direction is the same across all three seeds, the size is on the order of the eval noise, and it is definitely not an improvement.
+
+<Callout tone="warn" title="It gets worse before it gets better">
+Mid-installation the model is a mess. At step 50, right in the middle of the language switch, held-out accuracy slumps to 0.19 and 0.31 on two runs before recovering to about 0.80 by step 100. The monologue changes language mid-thought, and for a few dozen steps the model reasons bilingually.
+</Callout>
+
+One more reassuring detail: both anchor weights I tried (0.1 and 0.3) saturate, with identical accuracy. The fix did not need delicate tuning to work at all, which is usually a good sign about a mechanism.
+
+## Scaling up: an 8-billion-parameter Finnish thinker
+
+The full recipe on the biggest model I trained, Qwen3-8B: Finnish fine-tune first, then RL with the penalty and the anchor.
+
+| model | accuracy | thinking in Finnish |
+|---|---:|---:|
+| 8B after Finnish fine-tune | 0.80 | roughly 92% |
+| same, after anchored RL | 0.82 | roughly 100% |
+
+Read this with caution, since these are single runs. And I have not yet compared it against anyone else's models.
+
+<Callout tone="aside" title="A story from the 8B run">
+The first 8B attempt used the exact learning rate that the 4B model trained happily on. At step 60 the model broke and began returning empty strings for every problem, which is a uniquely deflating thing to find in the morning logs. Halving the learning rate and tightening the gradient clip fixed it. So, for the record, to everyone training models: the bigger model needs a slightly gentler touch.
+</Callout>
+
+## Over-optimization
+
+While all this was running, a second failure known in the field kept recurring in my longer RL runs: over-optimization. Train a reasoning model with RL for long enough and it can start "gaming" the reward. Completions get shorter, the thinking block stops containing thought, accuracy quietly collapses.
+
+Here is what that looks like on a long run without protection, and the same run with the anchor (this time anchoring on English reasoning traces, since this model thinks in English; the anchor's job here is to keep the reasoning real, not to change its language):
+
+<ParamPlot
+  compute="miettija.collapse"
+  title="Long-run RL: unprotected vs anchored"
+  caption="Held-out accuracy by checkpoint, one run each. The unprotected run peaks at 0.404 and craters to 0.052 by checkpoint 450, with completions shriveling to an average of 131 characters. The anchored run holds a flat 0.39 to 0.36 with healthy 1200-character reasoning at the same checkpoint."
+  kind="line"
+  xLabel="checkpoint"
+  yLabel="held-out accuracy"
+  params={{ anchored: 1 }}
+  controls={[
+    { kind: 'slider', param: 'anchored', label: 'Anchor on (1) / off (0)', min: 0, max: 1, step: 1, format: 'int' },
+  ]}
+/>
+
+Two completions for the same problem, from the same late checkpoint. The first is from the anchored run, the second shows what collapse looks like:
+
+```text
+<think> Selvitetään ensin, montako munaa kanat munivat päivässä.
+Kanoja on 16 ja jokainen munii yhden munan, joten munia tulee 16.
+Janet syö kolme aamiaiseksi ja leipoo neljä muffineihin, joten
+myytäväksi jää 16 - 3 - 4 = 9 munaa. Jokainen muna maksaa 2
+dollaria, joten Janet ansaitsee 9 * 2 = 18 dollaria päivässä. </think>
+Lopullinen vastaus on 18.
+```
+
+```text
+<think> The question asks how much Janet makes daily at the
+farmers' market. Let me solve this. </think>
+The answer is 26.
+```
+
+<Quiz
+  question="The collapsed completion still has a think block, correct grammar, and a confident answer. What actually gives it away?"
+  choices={[
+    { text: 'It is shorter, and shorter is always worse' },
+    { text: 'It restates the question and announces an intention, but performs no actual computation before answering', correct: true },
+    { text: 'It answers in the wrong language' },
+  ]}
+  explanation="Length alone is a weak signal (concise correct reasoning exists). The tell is that nothing happens inside the think block: no quantities, no operations, no intermediate results."
+/>
+
+Be careful about what this shows and what it does not. At the peak, the unprotected run was actually a hair ahead (0.404 vs 0.392). The anchor does not make the model better; it makes the model refuse to fall apart.
+
+Still, step back and look at what just happened. The same tool, a small supervised anchor bolted onto the RL loss, fixed two completely different failures through two different mechanisms. In the bootstrap it supplied the gradient that the group-normalized reward mathematically could not. In the long run it anchored the reasoning to real traces while the reward was being gamed. I find it a genuinely elegant outcome that the cure for "RL cannot start a behavior" and the cure for "RL slowly destroys a behavior" turned out to be the same ~three lines of code.
+
+## Negative results
+
+Two results that will hopefully add credibility to everything above.
+
+First: the anchor does not directly add ability. On the base Llama (the one that scored 8% earlier), RL with the anchor produced beautiful think-formatted text: the fraction of completions containing a proper thinking block rose from zero to over 90%. Accuracy rose from 0.28 to 0.29 at its best, within noise, and never exceeded the roughly 0.28 ceiling that plain RL also hits. Form moved, ability did not...
+
+Second: the fix does not transfer to rarer languages for free. I reran the whole pipeline for Swahili, which appears in these models' training data far less than Finnish does. The diagnosis half generalizes perfectly: the naive penalty leaves Swahili thinking at exactly 0%, just as the math predicts, but no fix or anchor was enough to turn this model, at least on our budgets. At the weight that installed Finnish: nothing. At triple that: nothing. At nearly seven times it: still 0% at step 80.
+
+I want to be precise about the conclusions for this smaller language. The Swahili anchor pool was about seven times smaller than the Finnish fine-tuning pool (962 traces versus 6,809), the translation and tokenization quality differ, and even the language classifier is on thinner ice for Swahili than it already is for Finnish. So the honest claim is: the fix is demonstrably not free for a rarer language at this budget.
+
+## How we stopped the model from cheating
+
+RL will find its ways to cheat, and this language reward was one of the rewards the model tried to game. Here are some of the "attacks" we noticed and blocked:
+
+| attack | verdict |
+|---|---|
+| skip the think block entirely | rejected |
+| empty think block | rejected |
+| equations only, no prose | rejected |
+| plain English reasoning | rejected |
+| English reasoning with Finnish words sprinkled in | rejected |
+| half Finnish, half English | rejected |
+| one Finnish word repeated hundreds of times | rejected |
+| genuine Finnish with a few English math terms | accepted (correctly) |
+
+The one documented gap: fluent Finnish prose about something else entirely (the weather, a cat on a table) passes the language check, because it genuinely is Finnish. It still fails, though, because it never produces the correct final answer, and the correctness reward handles it.
+
+## What this first glimpse means
+
+This study was never meant to be comprehensive. It is a first look at one question: if we use high-quality translated data, what does the future of training models for a small language look like? Three things I now believe more strongly than three months ago.
+
+Interpretability is a language problem. "The model shows its reasoning" is only worth something to a Finnish doctor and the like if the reasoning is in a language they read natively. As reasoning models move into regulated work, "thinks in the user's language" is going to migrate from a nice-to-have to a requirement someone writes down. The good news from this project: it is achievable, deliberately, at a measurable and so far modest cost.
+
+Data volume is, naturally, a big problem. English gets the biggest share of the training data, so models think in English, so the tooling and the evaluations and the habits all form around English thinking, so the gap widens. Finnish sits in a fortunate middle: there is enough data that a careful nudge works. The Swahili result, whatever its ultimate cause, says the nudge gets harder as the data volume shrinks further. Translated data is, and will continue to be, genuinely valuable. We showed that roughly seven thousand carefully translated reasoning traces plus four examples per RL step were enough to install a thinking language from literal zero.
+
+Here are a couple more questions I kept turning over, and which the comment section exists for: the model has seen hundreds of languages but thinks in one, so does thinking only in English leave capability on the table, or is English the best thinking language precisely because there is the most of it? Should a model think in the language of the question? And the big one: is the thinking even meant to be read at all, and by whom?
+
+## Check yourself
+
+<Quiz
+  question="A model produces Finnish reasoning 0% of the time. You add a penalty on non-Finnish reasoning to a group-relative RL setup (like GRPO). What happens?"
+  choices={[
+    { text: 'The model gradually drifts toward Finnish to avoid the penalty' },
+    { text: 'Nothing: every completion in each group pays the same penalty, so the group-relative advantage is unchanged and the penalty contributes zero gradient', correct: true },
+    { text: 'The model collapses to empty completions to minimize the penalized text' },
+  ]}
+  explanation="Group-relative methods learn from differences within a group. A penalty that hits all members equally is an additive constant: it cancels in the advantage numerator and leaves the spread unchanged. At a 0% base rate the language penalty is exactly such a constant, so the training signal is bitwise identical to having no penalty at all. This is also why seeding even a modest base rate (25% worked) makes the same penalty engage almost immediately."
+/>
+
+## And what's next
+
+Everything here ran on grade-school math, most cells are single runs, and the held-out language fractions are heuristic estimates. The next round has an obvious shape: Finnish tasks from outside the training distribution, a budget-matched Swahili run, more seeds on the single-run cells, and a proper external comparison for the 8B model. On top of that, I would love to train a Finnish-language coding agent model, but my compute budget may not stretch that far...
+
+A more technical write-up of the cancellation algebra and the training recipe is coming once I find the time to do it properly. If a model thinking in your language matters to you, professionally or just on principle, I would genuinely like to hear why in the comments.
+
+*The training ran on the LUMI supercomputer. Kiitos.*

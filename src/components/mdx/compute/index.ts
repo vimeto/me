@@ -59,6 +59,7 @@ import {
   sinksStreamingStability,
   sinksSinkEmergence,
 } from './sinks'
+import { miettijaBaseRate, miettijaBootstrap, miettijaCollapse } from './miettija'
 
 export const computeRegistry: Record<string, ComputeFn> = {
   'gptq.flippingRange': gptqFlippingRange,
@@ -116,6 +117,9 @@ export const computeRegistry: Record<string, ComputeFn> = {
   'memcomp.compositionError': memcompCompositionError,
   'memcomp.layerInjectionSensitivity': memcompLayerInjectionSensitivity,
   'memcomp.multiInjectionCompounding': memcompMultiInjectionCompounding,
+  'miettija.baseRate': miettijaBaseRate,
+  'miettija.bootstrap': miettijaBootstrap,
+  'miettija.collapse': miettijaCollapse,
 }
 
 export function getCompute(key: string): ComputeFn | undefined {
