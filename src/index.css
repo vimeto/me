@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,700&display=swap');
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/inter/700.css';
+@import '@fontsource-variable/newsreader/opsz.css';
+@import '@fontsource-variable/newsreader/opsz-italic.css';
 @import 'katex/dist/katex.min.css';
 @tailwind base;
 @tailwind components;
@@ -140,5 +145,36 @@ html {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+/* View transitions: home Writing section ↔ /blog. The title and filter row
+   share view-transition-names, so navigating reads as the section expanding
+   into the full page instead of a hard swap. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.25s;
+}
+
+::view-transition-group(writing-title),
+::view-transition-group(writing-filters) {
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+::view-transition-old(writing-title),
+::view-transition-new(writing-title),
+::view-transition-old(writing-filters),
+::view-transition-new(writing-filters) {
+  animation-duration: 0.4s;
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-image-pair(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

@@ -3,6 +3,28 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Sun, Moon } from 'lucide-react'
 import { useLocation, useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
+import { ease } from '@/lib/motion'
+
+// Static VT monogram — the mobile trigger's closed state, extracted as a
+// non-morphing brand mark for the desktop nav.
+function VTMonogram() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-5 w-5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      aria-hidden="true"
+    >
+      <line x1={4} y1={7} x2={8} y2={17} />
+      <line x1={12} y1={7} x2={8} y2={17} />
+      <line x1={13} y1={7} x2={20} y2={7} />
+      <line x1={16.5} y1={7} x2={16.5} y2={17} />
+    </svg>
+  )
+}
 
 const sections = [
   { id: 'hero', label: 'Home' },
@@ -21,16 +43,16 @@ export function Navigation() {
   const location = useLocation()
   const navigate = useNavigate()
   const onHome = location.pathname === '/'
+  const onBlog = location.pathname.startsWith('/blog')
+
+  // "Writing" is a real page (/blog), not a scroll target; it lights up there.
+  const isActive = (id: string) =>
+    id === 'writing' ? onBlog || (onHome && activeSection === id) : onHome && activeSection === id
 
   useEffect(() => {
-    const isDarkMode =
-      localStorage.getItem('darkMode') === 'true' ||
-      (!localStorage.getItem('darkMode') &&
-        window.matchMedia('(prefers-color-scheme: dark)').matches)
-    setIsDark(isDarkMode)
-    if (isDarkMode) {
-      document.documentElement.classList.add('dark')
-    }
+    // The inline head script is the source of truth for first paint; mirror
+    // whatever class it already applied.
+    setIsDark(document.documentElement.classList.contains('dark'))
   }, [])
 
   useEffect(() => {
@@ -86,6 +108,10 @@ export function Navigation() {
 
   const goToSection = (id: string) => {
     setDrawerOpen(false)
+    if (id === 'writing') {
+      navigate('/blog', { viewTransition: true })
+      return
+    }
     if (onHome) {
       const element = document.getElementById(id)
       if (element) element.scrollIntoView({ behavior: 'smooth' })
@@ -99,21 +125,37 @@ export function Navigation() {
       <nav className="fixed top-0 left-0 right-0 z-50 bg-background border-b border-border">
         <div className="max-w-5xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            {/* Desktop: inline section list. Hidden on mobile. */}
+            {/* Desktop: brand mark + inline section list. Hidden on mobile. */}
             <div className="hidden md:flex items-center gap-6 overflow-x-auto">
-              {sections.map(({ id, label }) => (
-                <button
-                  key={id}
-                  onClick={() => goToSection(id)}
-                  className={`text-sm whitespace-nowrap transition-colors ${
-                    onHome && activeSection === id
-                      ? 'font-bold underline underline-offset-4 decoration-2 decoration-ink'
-                      : 'hover:underline underline-offset-4 decoration-1'
-                  }`}
-                >
-                  {label}
-                </button>
-              ))}
+              <button
+                type="button"
+                onClick={() => goToSection('hero')}
+                aria-label="Back to top"
+                className="hidden md:inline-flex items-center justify-center h-9 w-9 rounded-full border-2 border-foreground/80 bg-background text-foreground flex-shrink-0"
+              >
+                <VTMonogram />
+              </button>
+              {sections.map(({ id, label }) => {
+                const active = isActive(id)
+                return (
+                  <button
+                    key={id}
+                    onClick={() => goToSection(id)}
+                    className={`relative text-sm whitespace-nowrap transition-colors ${
+                      active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {label}
+                    {active && (
+                      <motion.span
+                        layoutId="nav-underline"
+                        className="absolute -bottom-1 left-0 right-0 h-[2px] bg-ink"
+                        transition={{ duration: 0.32, ease }}
+                      />
+                    )}
+                  </button>
+                )
+              })}
             </div>
 
             {/* Mobile: VT initials trigger. Decomposes V and T into 4 strokes;
@@ -174,7 +216,7 @@ export function Navigation() {
               size="icon"
               onClick={toggleDarkMode}
               aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="ml-4 border border-border hover:border-2 flex-shrink-0"
+              className="ml-4 border border-border/60 hover:bg-accent flex-shrink-0"
             >
               {isDark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
             </Button>
@@ -219,10 +261,8 @@ export function Navigation() {
                       <button
                         type="button"
                         onClick={() => goToSection(id)}
-                        className={`w-full text-left py-3 px-2 text-base transition-colors border-b border-border/60 ${
-                          onHome && activeSection === id
-                            ? 'font-bold'
-                            : 'text-foreground/80 hover:text-foreground'
+                        className={`w-full text-left py-3.5 px-3 min-h-[44px] text-base transition-colors border-b border-border/60 ${
+                          isActive(id) ? 'font-bold' : 'text-foreground/80 hover:text-foreground'
                         }`}
                       >
                         {label}
