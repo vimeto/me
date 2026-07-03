@@ -25,6 +25,14 @@ export const PostFrontmatter = z
     status: z.enum(['draft', 'published']).default('draft'),
     estimatedReadMin: z.number().positive().optional(),
     cover: z.string().optional(),
+    // BCP-47 primary language subtag. A post directory holds one canonical
+    // `index.mdx` plus optional `index.<lang>.mdx` variants that share its
+    // slug — the variants are the same post in another language, not
+    // separate posts.
+    lang: z
+      .string()
+      .regex(/^[a-z]{2}$/, 'lang must be a two-letter language code (e.g. "en", "fi")')
+      .default('en'),
   })
   .strict()
 
@@ -34,4 +42,8 @@ export type Post = PostMeta & {
   Body: ComponentType<MDXProps>
   sourcePath: string
   permalink: string
+  /** Languages this post exists in, canonical first. Length 1 for most posts. */
+  languages: string[]
+  /** Language variants of this post (canonical post lists its variants; a variant lists none). */
+  variants: Post[]
 }

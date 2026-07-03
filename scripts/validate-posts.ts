@@ -46,7 +46,8 @@ export type Issue = {
   snippet?: string
 }
 
-const DEFAULT_GLOB = 'content/posts/**/index.mdx'
+// Matches the canonical index.mdx and language variants (index.<lang>.mdx).
+const DEFAULT_GLOB = 'content/posts/**/index{,.*}.mdx'
 const NATIVE_HTML_RX = /^[a-z]/ // JSX treats lowercase names as intrinsic HTML/SVG
 
 const cwd = process.cwd()

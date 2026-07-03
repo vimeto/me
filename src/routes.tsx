@@ -14,6 +14,9 @@ export const routes: RouteObject[] = [
       { path: '/', element: <Home /> },
       { path: '/blog', element: <BlogIndex /> },
       { path: '/blog/:slug', element: <BlogPost /> },
+      // Language variants of a post (e.g. /blog/my-post/fi). Same post, same
+      // comments, different body — the switcher lives in the post header.
+      { path: '/blog/:slug/:lang', element: <BlogPost /> },
       // `/search` loads Pagefind's client bundle at runtime. We *do* prerender
       // an empty shell so the URL resolves — the actual index + results are
       // populated client-side.
@@ -30,6 +33,9 @@ export const routes: RouteObject[] = [
 // out drafts by default, so draft posts never get a public HTML page — they
 // remain reachable only in the dev server's client-only routing.
 export function getAllStaticPaths(): string[] {
-  const postPaths = listPosts().map((p) => p.permalink)
+  const postPaths = listPosts().flatMap((p) => [
+    p.permalink,
+    ...p.variants.filter((v) => v.status === 'published').map((v) => v.permalink),
+  ])
   return ['/', '/blog', '/search', ...postPaths]
 }

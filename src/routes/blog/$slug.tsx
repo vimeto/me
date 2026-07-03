@@ -4,8 +4,8 @@ import { PostLayout } from '@/components/mdx/layout/PostLayout'
 import { Comments } from '@/components/comments/Comments'
 
 export default function BlogPost() {
-  const { slug } = useParams<{ slug: string }>()
-  const post = slug ? getPost(slug) : undefined
+  const { slug, lang } = useParams<{ slug: string; lang?: string }>()
+  const post = slug ? getPost(slug, lang) : undefined
 
   if (!post) {
     return (

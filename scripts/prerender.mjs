@@ -77,12 +77,15 @@ function xmlEscape(s) {
 const today = new Date().toISOString().slice(0, 10)
 const sitemapUrls = paths.map((p) => {
   const loc = `${SITE.url.replace(/\/$/, '')}${p}`
-  const isPost = /^\/blog\/[a-z0-9-]+$/.test(p)
+  // Post pages, including language variants (/blog/<slug>/<lang>). Variants
+  // inherit the canonical post's dates.
+  const isPost = /^\/blog\/[a-z0-9-]+(?:\/[a-z]{2})?$/.test(p)
+  const canonicalPath = p.replace(/^(\/blog\/[a-z0-9-]+)\/[a-z]{2}$/, '$1')
   return {
     loc,
     lastmod: isPost
-      ? (listPosts().find((post) => post.permalink === p)?.updatedAt ??
-        listPosts().find((post) => post.permalink === p)?.publishedAt ??
+      ? (listPosts().find((post) => post.permalink === canonicalPath)?.updatedAt ??
+        listPosts().find((post) => post.permalink === canonicalPath)?.publishedAt ??
         today)
       : today,
     changefreq: p === '/' ? 'monthly' : isPost ? 'yearly' : 'weekly',
