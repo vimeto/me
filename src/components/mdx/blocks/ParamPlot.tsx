@@ -10,14 +10,7 @@ import { Plot, type PlotDims } from '../primitives/Plot'
 import { Slider } from '../primitives/Slider'
 import { Range } from '../primitives/Range'
 import { ParamPlayground } from '../primitives/ParamPlayground'
-import {
-  plotChrome,
-  series,
-  seriesAt,
-  seriesOrder,
-  textureIds,
-  type SeriesKey,
-} from '../theme/tokens'
+import { plotChrome, series, seriesOrder, textureIds, type SeriesKey } from '../theme/tokens'
 
 type FormatKind = 'int' | 'decimal' | 'percent' | undefined
 
@@ -504,6 +497,3 @@ function PlotBody({
     </Group>
   )
 }
-
-// Avoid an unused-symbol warning if seriesAt is no longer referenced.
-void seriesAt

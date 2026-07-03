@@ -245,7 +245,7 @@ export const tttAdaptCurve: ComputeFn = (params) => {
     summary: [
       { label: 'Critical η', value: etaCrit.toFixed(3) },
       { label: 'Loss at T, good η', value: lossGood.toFixed(3) },
-      { label: 'Big η stable?', value: etaBig <= etaCrit ? 'yes' : 'no — diverged' },
+      { label: 'Big η stable?', value: etaBig <= etaCrit ? 'yes' : 'no (diverged)' },
     ],
   }
 }

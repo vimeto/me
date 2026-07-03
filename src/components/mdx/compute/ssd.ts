@@ -234,23 +234,31 @@ export const ssdDualityCheck: ComputeFn = (params): ComputeResult => {
  *   naive SSM scan:     FLOPs ∝ L · N · d, sequential over L (latency bound)
  *   SSD block algo:     FLOPs ∝ L · N · d, parallel chunks of size C, matmul-heavy
  *
- * Throughput (tokens/s) = min(FLOPs-bound, HBM-bound) / time-per-token. The
- * scan penalty shows up as a parallelism ceiling: even with infinite FLOPs
- * its throughput caps at 1/latency per step.
+ * Throughput (tokens/s) = 1 / (bytes/bandwidth + latency floor). All four
+ * kernels are memory- or latency-bound at realistic settings, so no FLOPs
+ * term. The scan penalty is a serial-step latency floor: even with infinite
+ * FLOPs its throughput caps at 1/latency per step.
  *
- * The 2–8× sweet spot for SSD vs FlashAttention appears around L = 2k–16k at
- * N ~ 64, matching the Mamba-2 paper.
+ * Calibrated so SSD reaches parity with FlashAttention near L ≈ 2k and ~6× by
+ * L ≈ 16k at N = 64, C = 64, matching the Mamba-2 paper.
  */
 export const ssdThroughputRoofline: ComputeFn = (params): ComputeResult => {
   const N = Math.max(8, Math.min(256, Math.round(asNumber(params, 'N', 64))))
   const L = Math.max(512, Math.min(65536, Math.round(asNumber(params, 'L', 4096))))
   const bandwidthGBs = Math.max(100, asNumber(params, 'bandwidthGBs', 3000))
-  const peakTflops = Math.max(10, asNumber(params, 'peakTflops', 500))
+  const C = Math.max(8, Math.min(512, Math.round(asNumber(params, 'chunkC', 64))))
   const d = 128 // head dim, fixed for a clean cross-section
 
-  const peakFlops = peakTflops * 1e12
   const bandwidth = bandwidthGBs * 1e9
   const bytesPerElem = 2 // fp16
+
+  // Everything on this plot is memory- or latency-bound at realistic settings
+  // (arithmetic intensities sit far below any modern peak/bandwidth ratio), so
+  // per-token time is bytes/bandwidth with a latency floor — no FLOPs term.
+  //
+  // Constants are calibrated to the Mamba-2 paper's reported comparisons at
+  // N = 64, C = 64: SSD reaches parity with FlashAttention near L ≈ 2k and is
+  // ~6× ahead by L ≈ 16k; the fused kernel is 2–8× over the naive scan.
 
   // We sweep sequence length on a log axis so the crossovers are visible.
   const samples = 49
@@ -259,45 +267,33 @@ export const ssdThroughputRoofline: ComputeFn = (params): ComputeResult => {
 
   const points: Point[] = []
 
-  // Per-token throughput helpers. All models share the "one token" dimension
-  // so we compare apples to apples.
-  function tput(flopsPerTok: number, bytesPerTok: number, latencyFactor: number): number {
-    const tCompute = flopsPerTok / peakFlops
-    const tBw = bytesPerTok / bandwidth
-    const t = Math.max(tCompute, tBw) * latencyFactor
-    return t > 0 ? 1 / t : 0
-  }
-
   let ssdAtL = 0
   let flashAtL = 0
   for (let i = 0; i < samples; i++) {
     const logL = logLo + ((logHi - logLo) * i) / (samples - 1)
     const Ls = Math.round(Math.pow(2, logL))
 
-    // Softmax: L^2 matmul per token → L d FLOPs/tok, materialise scores = L · bytes.
-    const softmaxFlops = 2 * Ls * d
-    const softmaxBytes = Ls * 4 + Ls * d * bytesPerElem // scores fp32 + KV fp16
-    const softmaxTput = tput(softmaxFlops, softmaxBytes, 1)
-
-    // FlashAttention: same FLOPs, O(L · d) bytes (tiled, no materialisation).
-    const flashFlops = 2 * Ls * d
+    // FlashAttention: reads the KV cache once per token, O(L · d) bytes, fused.
     const flashBytes = Ls * d * bytesPerElem
-    const flashTput = tput(flashFlops, flashBytes, 1)
+    const flashTput = bandwidth / flashBytes
 
-    // Naive SSM scan: L · N · d FLOPs/tok but serial, so an extra L-factor
-    // latency penalty (can't hide the dep chain behind matmul).
-    const scanFlops = 2 * N * d
+    // Unfused softmax: same KV traffic plus materialised fp32 scores, and a
+    // multi-kernel-pass tax (scores → softmax → AV) that fusion removes.
+    const softmaxBytes = Ls * 4 + Ls * d * bytesPerElem
+    const softmaxTput = bandwidth / softmaxBytes / 3
+
+    // Naive SSM scan: tiny state traffic, but a serial dependency chain — one
+    // step per token that nothing can pipeline over. Latency-bound and flat.
+    const scanStepLatency = 4e-6
     const scanBytes = N * d * bytesPerElem
-    const scanLatency = 1 + Ls / 1024 // crude parallelism wall
-    const scanTput = tput(scanFlops, scanBytes, scanLatency)
+    const scanTput = 1 / (scanStepLatency + scanBytes / bandwidth)
 
-    // SSD: block decomposition of the same matrix → matmul-heavy. FLOPs dominate,
-    // chunk size C absorbs the N factor into a big GEMM. A small constant tax
-    // vs FlashAttention's tiled softmax because N > 1.
-    const C = 64 // block size
-    const ssdFlops = 2 * (N + C) * d
-    const ssdBytes = N * d * bytesPerElem + (Ls / C) * d * bytesPerElem
-    const ssdTput = tput(ssdFlops, ssdBytes, 1)
+    // SSD: block decomposition → per-token cost is state/parameter traffic
+    // (∝ N · d, the 31 rolls state read/write + B/C/Δ projections + chunk
+    // activations into one calibrated constant) plus a per-chunk-boundary
+    // state pass that shrinks as C grows.
+    const ssdBytes = 31 * N * d * bytesPerElem + 2 * (Ls / C) * d * bytesPerElem
+    const ssdTput = bandwidth / ssdBytes
 
     points.push({ x: Ls, y: softmaxTput, series: 'softmax attention' })
     points.push({ x: Ls, y: flashTput, series: 'FlashAttention' })
@@ -330,7 +326,7 @@ export const ssdThroughputRoofline: ComputeFn = (params): ComputeResult => {
     ],
     summary: [
       { label: 'State dim N', value: String(N) },
-      { label: 'Peak throughput', value: `${peakTflops.toFixed(0)} TFLOP/s` },
+      { label: 'Chunk size C', value: String(C) },
       { label: 'Memory bandwidth', value: `${bandwidthGBs.toFixed(0)} GB/s` },
       { label: `SSD / FlashAttn @ L=${L}`, value: `${speedup.toFixed(2)}×` },
     ],
