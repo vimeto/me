@@ -79,7 +79,7 @@ export default function AdminPage() {
         {query.status === 'error' && (
           <p className="text-sm text-destructive">
             Failed to load: {query.message}. If this says "unauthenticated", your Access session
-            probably expired — reload to re-authenticate.
+            probably expired; reload to re-authenticate.
           </p>
         )}
         {query.status === 'ready' && query.rows.length === 0 && (

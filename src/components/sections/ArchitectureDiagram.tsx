@@ -99,7 +99,7 @@ export function ArchitectureDiagram() {
         </g>
       </svg>
       <figcaption className="mt-4 text-xs font-mono uppercase tracking-wider text-muted-foreground text-center">
-        Fig. 1 — Edge / cloud collaboration
+        Fig. 1 · Edge / cloud collaboration
       </figcaption>
     </figure>
   )

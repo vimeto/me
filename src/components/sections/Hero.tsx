@@ -13,7 +13,7 @@ export function Hero() {
     >
       <div className="mx-auto grid min-h-[calc(100vh-13rem)] w-full max-w-5xl items-center gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(300px,390px)] lg:gap-0">
         <motion.div
-          className="relative z-10 max-w-3xl lg:pr-10"
+          className="relative z-10 max-w-3xl lg:pr-20"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ duration: 0.3 }}
@@ -40,7 +40,7 @@ export function Hero() {
           </div>
 
           <p className="mb-5 max-w-2xl font-serif text-xl leading-snug md:text-2xl">
-            Distributed LLMs — cognitive core, edge deployment, and tool-using agents.
+            Distributed LLMs: cognitive core, edge deployment, and tool-using agents.
           </p>
 
           <p className="mb-10 max-w-2xl text-base leading-relaxed text-muted-foreground md:text-lg">
@@ -59,12 +59,19 @@ export function Hero() {
             <ul className="space-y-2 text-lg">
               <li>
                 • BridgeLoRA: distributed fine-tuning across edge adapters and cloud backbones
-                (ICDCS 2026)
+                (ICDCS 2026; TKDE extension underway)
               </li>
-              <li>• On-policy distillation: removing the teacher early without quality loss</li>
               <li>
-                • Edge inference for small models: predictive MoE routing and additive hierarchical
-                memory
+                • On-policy distillation: removing the teacher early without quality loss (COLM
+                2026, in review)
+              </li>
+              <li>
+                • Exact-fallback MoE caching and addressable memory banks for frozen models (2×
+                AAAI-27 targets)
+              </li>
+              <li>
+                • Next: edge-mesh distillation extending the COLM work, and miettijä (teaching small
+                models to reason in Finnish)
               </li>
             </ul>
           </div>
@@ -122,7 +129,7 @@ export function Hero() {
             animate={{ opacity: 1, filter: 'blur(0px) saturate(0.82)' }}
             transition={{ duration: 1.0, delay: 0.18, ease: [0.22, 1, 0.36, 1] }}
             style={{ y: portraitY }}
-            className="absolute bottom-[15%] left-[-92px] w-[min(48vw,560px)] max-w-none select-none object-contain drop-shadow-[0_28px_42px_rgb(0_0_0_/_0.16)] dark:drop-shadow-[0_26px_44px_rgb(255_255_255_/_0.08)]"
+            className="absolute bottom-[15%] left-[-48px] w-[min(40vw,500px)] max-w-none select-none object-contain drop-shadow-[0_28px_42px_rgb(0_0_0_/_0.16)] dark:drop-shadow-[0_26px_44px_rgb(255_255_255_/_0.08)]"
           />
         </motion.figure>
       </div>

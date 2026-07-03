@@ -1,34 +1,32 @@
 import { motion } from 'framer-motion'
-import { Separator } from '@/components/ui/separator'
 import { SectionHeader } from '@/components/ui/section-header'
+import { RuleDraw } from '@/components/ui/rule-draw'
 import { ArchitectureDiagram } from '@/components/sections/ArchitectureDiagram'
+import { fadeRise, staggerChildren, viewportOnce } from '@/lib/motion'
 
 const researchAreas = [
   {
-    title: 'BridgeLoRA — Journal Extension',
-    question:
-      'Which transformer layers benefit most from per-task adapters, and where can frozen backbones still serve?',
+    title: 'BridgeLoRA: Journal Extension',
+    question: 'What does BridgeLoRA cost and leak in practice across the edge–cloud continuum?',
     method:
-      'Extending the ICDCS 2026 result with mechanistic interpretability — which layers, which adapters, which datasets — so adapter placement is principled, not heuristic',
-    output:
-      'Journal paper with concrete parameter-efficiency recipes; reference pipelines for layer-targeted adaptation',
+      'Extending the ICDCS 2026 result with systematic profiling, utility analysis, and honest privacy bounds (≥3311× perplexity blow-up to invert at ε=4)',
+    output: 'IEEE TKDE submission',
   },
   {
-    title: 'Predictive MoE Routing',
+    title: 'Exact-Fallback Expert Caching for MoE',
     question:
-      'Can a lightweight predictor running alongside a Mixture-of-Experts model speed up its inference on edge devices?',
+      'Does a higher expert-cache hit rate actually mean better output on offloaded MoE models?',
     method:
-      'Anticipate which experts the model will dispatch to, prefetch the relevant weights, and pre-stage the routing path so memory bandwidth on consumer hardware stops being the bottleneck',
-    output: 'Latency improvements that make MoE feasible for on-device deployment',
+      "It doesn't: quality tracks miss severity, not hit rate. An exact-fallback kernel serves cache misses from CPU memory, so decode stays byte-identical to stock vLLM while a predictor prefetches ahead",
+    output: '+10–19% decode throughput; targeting AAAI-27',
   },
   {
-    title: 'Hierarchical Memory Bank',
+    title: 'Addressable Memory Banks',
     question:
-      'Can a small language model gain reliable, composable memory by injecting trainable deltas into its residual stream?',
+      "Can a frozen model serve thousands of users' private facts without rereading them, and without leaking across users?",
     method:
-      'Different fact types target different transformer layers; memories compose additively, so banks can stack on top of one another; tested on hierarchically organized data',
-    output:
-      'A modular memory architecture that scales by addition rather than retraining the base model',
+      'Per-user rows in an addressable attention bank; strict gradient isolation makes deletion and access control exact, and multi-layer injection scales past a single write',
+    output: 'Multi-tenant memory with provable isolation; targeting AAAI-27',
   },
 ]
 
@@ -48,37 +46,41 @@ export function Research() {
             <p className="font-serif text-lg leading-relaxed">
               I focus on distributed LLM inference and small, tool-using models that can live on
               devices. The goal: a “cognitive core” that reasons well, uses tools, and keeps most
-              knowledge offloaded to retrieval instead of parameters. I got into ML
-              early—high-school research on data augmentation for speech recognition—and I still
-              work empirically: publishing benchmarks, code, and measurements on real consumer
-              hardware (iPhone, MacBook, edge servers).
+              knowledge offloaded to retrieval instead of parameters. I got into ML early
+              (high-school research on data augmentation for speech recognition) and I still work
+              empirically: publishing benchmarks, code, and measurements on real consumer hardware
+              (iPhone, MacBook, edge servers).
             </p>
 
             <ArchitectureDiagram />
 
-            <div className="mt-6 p-4 border border-border">
+            <div className="mt-6 p-4 border border-border/25">
               <h4 className="font-bold text-sm mb-2">Recent Papers</h4>
               <ul className="text-sm space-y-1">
                 <li>
                   • BridgeLoRA: Privacy-preserving Collaborative Skip-Layer Connectors for Efficient
-                  Transformer Fine-tuning at the Edge — accepted at ICDCS 2026
+                  Transformer Fine-tuning at the Edge (accepted at ICDCS 2026)
                 </li>
                 <li>
-                  • Measuring the True Cost of On-Device Agents (4 devices, 4 models, 300 tasks) —
-                  MobiHoc 2026 submission
+                  • Where Should LLM Agents Run? Characterizing Costs of Mobile, Edge, and Cloud
+                  Deployments (5 devices, 7 models, 8,400 trials; MobiHoc 2026 submission)
                 </li>
                 <li>
-                  • Scaffold-and-Release: When Can We Remove the Teacher from RLVR Training? — COLM
-                  2026 submission
+                  • Scaffold-and-Release: When Can We Remove the Teacher from KD-Augmented RLVR
+                  Training? (COLM 2026 submission, in review)
                 </li>
                 <li>
-                  • LLM Inference on Edge — Survey (first author, 180 references, in review since
-                  April 2026)
+                  • Foundation Model Inference at the Edge: survey (first author, ~240 references,
+                  submitted to ACM Computing Surveys, July 2026)
+                </li>
+                <li>
+                  • Efficient and Privacy-Preserving Large Language Model Inference at the Edge
+                  (PerCom 2026 PhD Forum)
                 </li>
               </ul>
             </div>
 
-            <div className="mt-4 p-4 border border-border">
+            <div className="mt-4 p-4 border border-border/25">
               <h4 className="font-bold text-sm mb-2">Theses</h4>
               <ul className="text-sm space-y-1">
                 <li>
@@ -91,36 +93,45 @@ export function Research() {
           </div>
 
           <h3 className="text-sm font-bold uppercase tracking-wider mb-6">Current Agenda</h3>
-          <Separator className="mb-8 bg-border" />
+          <RuleDraw className="h-px bg-foreground/60 mb-8" />
 
-          <div className="space-y-8">
-            {researchAreas.map((area, index) => (
+          <motion.div
+            variants={staggerChildren(0.08)}
+            initial="hidden"
+            whileInView="visible"
+            viewport={viewportOnce}
+            className="space-y-8"
+          >
+            {researchAreas.map((area) => (
               <motion.div
                 key={area.title}
-                initial={{ opacity: 0 }}
-                whileInView={{ opacity: 1 }}
-                transition={{ duration: 0.3, delay: index * 0.1 }}
-                viewport={{ once: true }}
-                className="border border-border p-6"
+                variants={fadeRise}
+                className="border border-border/60 p-6"
               >
                 <h4 className="font-bold mb-4">{area.title}</h4>
                 <div className="space-y-2 text-sm">
-                  <div className="flex">
-                    <span className="font-bold w-20">Question:</span>
-                    <span className="flex-1">{area.question}</span>
+                  <div className="flex flex-col gap-0.5 sm:flex-row">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground sm:w-24 sm:flex-shrink-0 sm:pt-0.5">
+                      Question:
+                    </span>
+                    <span className="text-sm flex-1">{area.question}</span>
                   </div>
-                  <div className="flex">
-                    <span className="font-bold w-20">Method:</span>
-                    <span className="flex-1">{area.method}</span>
+                  <div className="flex flex-col gap-0.5 sm:flex-row">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground sm:w-24 sm:flex-shrink-0 sm:pt-0.5">
+                      Method:
+                    </span>
+                    <span className="text-sm flex-1">{area.method}</span>
                   </div>
-                  <div className="flex">
-                    <span className="font-bold w-20">Output:</span>
-                    <span className="flex-1">{area.output}</span>
+                  <div className="flex flex-col gap-0.5 sm:flex-row">
+                    <span className="font-mono text-[11px] uppercase tracking-wider text-muted-foreground sm:w-24 sm:flex-shrink-0 sm:pt-0.5">
+                      Output:
+                    </span>
+                    <span className="text-sm flex-1">{area.output}</span>
                   </div>
                 </div>
               </motion.div>
             ))}
-          </div>
+          </motion.div>
 
           <div className="mt-12">
             <a
