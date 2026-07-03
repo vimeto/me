@@ -51,11 +51,13 @@ Ajoin saman reseptin kolmelle aika erilaiselle mallille, ja sama resepti teki ko
 | malli | mikä se oli ennen | suomenkielinen matematiikka | päättely suomeksi |
 |---|---|---:|---:|
 | Qwen3-4B, hienosäädetty | valmiiksi päättelevä malli | 63,6 % | 98 % |
-| Qwen3-4B, koskematon | (ajattelee englanniksi) | 69,6 % | 88 % |
+| Qwen3-4B, koskematon | (vaiheet suomeksi, monologi englanniksi) | 69,6 % | 88 % |
 | Gemma-3-4B, hienosäädetty | instruct-malli, ei näkyvää ajattelua | 36,0 % | 98 % |
 | Gemma-3-4B, koskematon | (pyydetty päättelemään suomeksi) | 74,0 % | 96 % |
 | Llama-3.2-3B, hienosäädetty | base-malli, ei mitään ohjeistusta | 8,0 % | (vain muoto) |
 | Llama-3.2-3B, koskematon | | 3,2 % | |
+
+Tuo toinen rivi hämmensi minuakin, kun palasin siihen. Jokainen malli, myös koskemattomat, saa täsmälleen saman täysin suomenkielisen kehotteen: suomenkieliset ohjeet, suomenkielinen tehtävä, raakaa tekstintäydennystä ilman chat-muotoilua. Sen alla tavallinen Qwen kirjoittaa ratkaisuvaiheensa suomeksi 88 % ajasta. Mutta ne ovat lueteltuja vaiheita, ei ajattelua. Kävin läpi kaikki 250 talletettua vastausta: joka ikinen kerta, kun malli lipsahtaa aitoon pohtivaan monologiinsa ("Okay, let's see… wait…"), monologi on englanniksi. 28 tapausta 28:sta. Tuo 88 % mittaa suomenkielisiä vaihelistoja; hienosäätö on se, mikä siirtää itse monologin suomeksi.
 
 Tässä on vaan yksi harjoitusajo per konfiguraatio, eli ei kannata lukea desimaaleja. Näistä huomaa kolme löydöstä:
 

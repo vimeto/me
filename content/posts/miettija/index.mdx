@@ -51,11 +51,13 @@ I ran the same recipe on three quite different models, and the same recipe did t
 | model | what it was before | Finnish math accuracy | reasoning in Finnish |
 |---|---|---:|---:|
 | Qwen3-4B, fine-tuned | already a reasoning model | 63.6% | 98% |
-| Qwen3-4B, untouched | (thinks in English) | 69.6% | 88% |
+| Qwen3-4B, untouched | (steps in Finnish, monologue in English) | 69.6% | 88% |
 | Gemma-3-4B, fine-tuned | instruct model, no visible thinking | 36.0% | 98% |
 | Gemma-3-4B, untouched | (prompted to reason in Finnish) | 74.0% | 96% |
 | Llama-3.2-3B, fine-tuned | base model, no instructions at all | 8.0% | (format only) |
 | Llama-3.2-3B, untouched | | 3.2% | |
+
+That second row confused even me when I came back to it. Every model here, untouched ones included, gets the same fully Finnish prompt: Finnish instructions, Finnish question, raw text completion without a chat template. Under that prompt a stock Qwen already writes its solution steps in Finnish 88% of the time. But those are recited steps, not thinking. I went back through all 250 saved completions: every single time the model slips into its real deliberative monologue (the "Okay, let's see… wait…" voice), that monologue is English. 28 cases out of 28. The 88% measures Finnish step-lists; the fine-tune is what moves the monologue itself into Finnish.
 
 There is only one training run per configuration here, so do not read the decimals. Three findings stand out.
 
